@@ -31,9 +31,16 @@ function FirstPersonCameras:loadMap()
     -- Has to happen once the engine is up, before the first camera update
     VehicleSeat.calibrateRotationSigns()
 
+    addConsoleCommand("fpcDebug", "Toggle the First Person Cameras seat readout",
+        "consoleCommandDebug", VehicleSeat)
+
     log("loaded - on foot: %s, in vehicle: %s",
         tostring(FPCSettings.get("walkEnabled")),
         tostring(FPCSettings.get("vehicleEnabled")))
+end
+
+function FirstPersonCameras:draw()
+    VehicleSeat.drawDebug()
 end
 
 function FirstPersonCameras:deleteMap()

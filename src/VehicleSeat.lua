@@ -36,34 +36,64 @@ VehicleSeat = {}
 
 -- Seat springs. Frequency in Hz, zeta is the damping ratio, gain is how much of
 -- the cab's acceleration the seat actually gives way to.
+--
+-- Steady state travel is gain / omega^2 per unit of cab acceleration, so a soft
+-- spring moves further for the same gain. The numbers below work out at roughly
+-- 35 mm of vertical travel and 20 mm of lateral travel per 1g, which is about
+-- what a real air seat gives and is clearly visible without being seasick.
 VehicleSeat.SEAT = {
     -- vertical: a soft air seat, around 1.5 Hz, deliberately underdamped so it
     -- rebounds once rather than deadening the hit
-    vertical   = { freq = 1.55, zeta = 0.34, gain = 0.115, limit = 0.115 },
+    vertical   = { freq = 1.55, zeta = 0.34, gain = 0.330, limit = 0.16 },
     -- lateral and fore/aft: much stiffer, you are braced against those
-    lateral    = { freq = 2.30, zeta = 0.50, gain = 0.055, limit = 0.055 },
-    longitudinal = { freq = 2.10, zeta = 0.48, gain = 0.060, limit = 0.060 },
+    lateral    = { freq = 2.30, zeta = 0.50, gain = 0.420, limit = 0.10 },
+    longitudinal = { freq = 2.10, zeta = 0.48, gain = 0.350, limit = 0.10 },
 }
 
--- Head springs, driven by angular acceleration. Radians.
+-- Head springs, driven by angular acceleration. Radians. Around 1.5 degrees of
+-- lean per 5 rad/s^2, which is a firm but not violent bump.
 VehicleSeat.HEAD = {
-    pitch = { freq = 1.45, zeta = 0.40, gain = 0.070, limit = 0.070 },  -- ~4 degrees
-    roll  = { freq = 1.60, zeta = 0.42, gain = 0.075, limit = 0.075 },
-    yaw   = { freq = 1.90, zeta = 0.55, gain = 0.038, limit = 0.038 },
+    pitch = { freq = 1.45, zeta = 0.40, gain = 0.440, limit = 0.100 },  -- ~5.7 degrees
+    roll  = { freq = 1.60, zeta = 0.42, gain = 0.540, limit = 0.110 },
+    yaw   = { freq = 1.90, zeta = 0.55, gain = 0.290, limit = 0.060 },
 }
 
-VehicleSeat.ENGINE_BASE_HZ = 8.5
-VehicleSeat.ENGINE_RPM_HZ = 9.0            -- added on top at full rpm
-VehicleSeat.ENGINE_IDLE_AMPLITUDE = 0.0011 -- metres
-VehicleSeat.ENGINE_LOAD_AMPLITUDE = 0.0018 -- extra at full load
+-- Engine vibration.
+--
+-- Keep these low. Anything approaching half the frame rate aliases: the samples
+-- walk around the waveform instead of tracing it, and what should be a fine
+-- shimmer comes out as a violent random shake that no amount of turning the
+-- amplitude down will fix. The second component is a sub-harmonic rather than a
+-- harmonic for the same reason - it reads as an engine lope and cannot alias.
+VehicleSeat.ENGINE_BASE_HZ = 4.5
+VehicleSeat.ENGINE_RPM_HZ = 4.5            -- added on top at full rpm
+VehicleSeat.ENGINE_MAX_SAMPLE_RATIO = 0.2  -- cap frequency at a fifth of the frame rate
+VehicleSeat.ENGINE_IDLE_AMPLITUDE = 0.00045 -- metres
+VehicleSeat.ENGINE_LOAD_AMPLITUDE = 0.00075 -- extra at full load
 VehicleSeat.ENGINE_PITCH_RATIO = 0.20      -- radians of shake per metre
 
 -- Guards. A physics hiccup or a teleport must not launch the springs.
-VehicleSeat.MAX_ACCELERATION = 45          -- m/s^2 per axis
-VehicleSeat.MAX_ANGULAR_ACCELERATION = 40  -- rad/s^2 per axis
+VehicleSeat.MAX_ACCELERATION = 60          -- m/s^2 per axis
+VehicleSeat.MAX_ANGULAR_ACCELERATION = 60  -- rad/s^2 per axis
 VehicleSeat.TELEPORT_DISTANCE = 4          -- m moved in one frame
 VehicleSeat.MAX_DT = 0.1                   -- s
 VehicleSeat.WARMUP_FRAMES = 3              -- samples needed before the springs run
+
+-- Live readout for the fpcDebug console command. Peaks are held and bled off so
+-- a single bump stays on screen long enough to read.
+VehicleSeat.debug = {
+    enabled = false,
+    peakDecay = 0.6,        -- per second
+    accX = 0, accY = 0, accZ = 0,
+    angPitch = 0, angRoll = 0, angYaw = 0,
+    seatX = 0, seatY = 0, seatZ = 0,
+    headPitch = 0, headRoll = 0, headYaw = 0,
+}
+
+local function holdPeak(field, value, dts)
+    local decayed = VehicleSeat.debug[field] * (1 - math.min(1, dts * VehicleSeat.debug.peakDecay))
+    VehicleSeat.debug[field] = math.max(decayed, math.abs(value))
+end
 
 -- Set once, at load, by calibrateRotationSigns()
 VehicleSeat.signX = 1
@@ -305,6 +335,21 @@ function VehicleSeat.update(camera, dt)
     local angleRoll = state.headRoll * headScale
     local angleYaw = state.headYaw * headScale
 
+    if VehicleSeat.debug.enabled then
+        holdPeak("accX", localAccX, dts)
+        holdPeak("accY", localAccY, dts)
+        holdPeak("accZ", localAccZ, dts)
+        holdPeak("angPitch", pitchAcc, dts)
+        holdPeak("angRoll", rollAcc, dts)
+        holdPeak("angYaw", yawAcc, dts)
+        holdPeak("seatX", offsetX, dts)
+        holdPeak("seatY", offsetY, dts)
+        holdPeak("seatZ", offsetZ, dts)
+        holdPeak("headPitch", anglePitch, dts)
+        holdPeak("headRoll", angleRoll, dts)
+        holdPeak("headYaw", angleYaw, dts)
+    end
+
     -- ENGINE VIBRATION --------------------------------------------------------
     local engineScale = FPCSettings.get("vehicleEngineScale")
     local vehicle = camera.vehicle
@@ -314,15 +359,19 @@ function VehicleSeat.update(camera, dt)
         local rpm = math.clamp(vehicle:getMotorRpmPercentage() or 0, 0, 1)
         local load = math.clamp(vehicle:getMotorLoadPercentage() or 0, 0, 1)
 
-        local frequency = VehicleSeat.ENGINE_BASE_HZ + VehicleSeat.ENGINE_RPM_HZ * rpm
+        -- Never let the vibration outrun what the frame rate can actually draw
+        local frequency = math.min(
+            VehicleSeat.ENGINE_BASE_HZ + VehicleSeat.ENGINE_RPM_HZ * rpm,
+            VehicleSeat.ENGINE_MAX_SAMPLE_RATIO / dts)
+
         state.enginePhase = state.enginePhase + frequency * math.pi * 2 * dts
         if state.enginePhase > math.pi * 2 then
             state.enginePhase = state.enginePhase - math.pi * 2
         end
 
         local amplitude = (VehicleSeat.ENGINE_IDLE_AMPLITUDE + VehicleSeat.ENGINE_LOAD_AMPLITUDE * load) * engineScale
-        -- Two components an octave apart so it reads as a rumble, not a hum
-        local shake = (math.sin(state.enginePhase) + math.sin(state.enginePhase * 2.13) * 0.4) * amplitude
+        -- Fundamental plus a sub-harmonic, so it lopes rather than hums
+        local shake = (math.sin(state.enginePhase) + math.sin(state.enginePhase * 0.5) * 0.35) * amplitude
 
         offsetY = offsetY + shake
         offsetX = offsetX + shake * 0.35
@@ -361,4 +410,39 @@ function VehicleSeat.update(camera, dt)
 
     setWorldTranslation(camera.cameraNode, newX, newY, newZ)
     setWorldQuaternion(camera.cameraNode, newQX, newQY, newQZ, newQW)
+end
+
+---Peak-hold readout of what the springs are actually being fed, so tuning is a
+-- measurement rather than a guess. Toggled with the fpcDebug console command.
+function VehicleSeat.drawDebug()
+    if not VehicleSeat.debug.enabled then
+        return
+    end
+
+    local d = VehicleSeat.debug
+    setTextColor(1, 1, 1, 1)
+    setTextAlignment(RenderText.ALIGN_LEFT)
+    setTextBold(false)
+
+    local x, y, size = 0.02, 0.62, 0.014
+    local function line(text)
+        renderText(x, y, size, text)
+        y = y - size * 1.25
+    end
+
+    setTextBold(true)
+    line("First Person Cameras - vehicle seat (peak held)")
+    setTextBold(false)
+    line(string.format("cab accel   side %6.1f  up %6.1f  fore %6.1f  m/s2", d.accX, d.accY, d.accZ))
+    line(string.format("cab angular pitch %6.1f  roll %6.1f  yaw %6.1f  rad/s2", d.angPitch, d.angRoll, d.angYaw))
+    line(string.format("seat travel side %6.1f  up %6.1f  fore %6.1f  mm",
+        d.seatX * 1000, d.seatY * 1000, d.seatZ * 1000))
+    line(string.format("head lean   pitch %6.2f  roll %6.2f  yaw %6.2f  deg",
+        math.deg(d.headPitch), math.deg(d.headRoll), math.deg(d.headYaw)))
+end
+
+function VehicleSeat.consoleCommandDebug()
+    VehicleSeat.debug.enabled = not VehicleSeat.debug.enabled
+    return string.format("First Person Cameras debug readout %s",
+        VehicleSeat.debug.enabled and "on" or "off")
 end

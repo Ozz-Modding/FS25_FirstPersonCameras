@@ -97,6 +97,24 @@ Cadence is also deliberately not derived from real stride lengths. The game walk
 at 7, which are not human speeds; feeding those into a real 0.85 m stride gives nearly five steps a
 second. The stride constants are stretched to keep cadence around two steps a second instead.
 
+## Tuning the vehicle springs
+
+`fpcDebug` in the console toggles a peak-held readout of what the springs are actually being fed —
+cab acceleration, cab angular acceleration, and the resulting seat travel and head lean. Use it
+before changing a gain; the first pass at these numbers was guessed and came out roughly four times
+too weak.
+
+Steady state travel is `gain / omega^2` per unit of cab acceleration, so a softer spring moves
+further for the same gain and the two cannot be tuned independently. Current numbers work out at
+about 35 mm of vertical seat travel and 20 mm of lateral per 1g, and about 1.5 degrees of head lean
+per 5 rad/s^2.
+
+**Engine vibration frequencies must stay well under the frame rate.** Anything approaching half of
+it aliases — the samples walk around the waveform instead of tracing it — and the result is a
+violent random shake that turning the amplitude down does not fix, because the amplitude was never
+the problem. The frequency is capped at a fifth of the current frame rate for that reason, and the
+second component is a sub-harmonic rather than a harmonic so it cannot alias either.
+
 ## Tuning
 
 Every amplitude and spring parameter is a named constant at the top of `WalkCamera.lua` and
