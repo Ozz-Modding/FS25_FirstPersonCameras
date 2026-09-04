@@ -1,0 +1,364 @@
+---
+-- VehicleSeat
+--
+-- Seat and body suspension for vehicle cameras.
+--
+-- In the base game the camera is bolted to the cab: the view moves exactly with
+-- the vehicle, so a tractor crossing a rut just teleports the horizon. A real
+-- seat is sprung, and the driver on it is a mass on top of that spring. This
+-- reproduces both:
+--
+--   * SEAT   - three damped springs (up/down, side to side, fore/aft) driven by
+--              the acceleration of the point the camera hangs off. Hit a bump
+--              and the cab jumps up while the seat stays behind, then catches
+--              up and overshoots slightly.
+--   * HEAD   - three more springs driven by the angular acceleration of the
+--              cab, so your head lags when the machine pitches and rolls, and
+--              leans in a corner or under braking.
+--   * ENGINE - a small vibration whose rate follows engine rpm and whose depth
+--              follows load.
+--
+-- All of it is measured, not scripted: we finite-difference the mount node's
+-- world transform. That means it works on every vehicle, including ones with no
+-- suspension data of their own, and it picks up whatever wheel suspension,
+-- articulation or cab damping the vehicle already has.
+--
+-- This is the same technique the base game's Suspensions specialization uses for
+-- cab suspension nodes (see vehicles/specializations/Suspensions.lua), which
+-- only a handful of vehicles define and which is off by default.
+--
+-- The result is applied after VehicleCamera:update has posed the camera, by
+-- rebuilding the camera's world transform through a small node chain. The game
+-- re-poses the camera from scratch every frame, so nothing accumulates.
+---
+
+VehicleSeat = {}
+
+-- Seat springs. Frequency in Hz, zeta is the damping ratio, gain is how much of
+-- the cab's acceleration the seat actually gives way to.
+VehicleSeat.SEAT = {
+    -- vertical: a soft air seat, around 1.5 Hz, deliberately underdamped so it
+    -- rebounds once rather than deadening the hit
+    vertical   = { freq = 1.55, zeta = 0.34, gain = 0.115, limit = 0.115 },
+    -- lateral and fore/aft: much stiffer, you are braced against those
+    lateral    = { freq = 2.30, zeta = 0.50, gain = 0.055, limit = 0.055 },
+    longitudinal = { freq = 2.10, zeta = 0.48, gain = 0.060, limit = 0.060 },
+}
+
+-- Head springs, driven by angular acceleration. Radians.
+VehicleSeat.HEAD = {
+    pitch = { freq = 1.45, zeta = 0.40, gain = 0.070, limit = 0.070 },  -- ~4 degrees
+    roll  = { freq = 1.60, zeta = 0.42, gain = 0.075, limit = 0.075 },
+    yaw   = { freq = 1.90, zeta = 0.55, gain = 0.038, limit = 0.038 },
+}
+
+VehicleSeat.ENGINE_BASE_HZ = 8.5
+VehicleSeat.ENGINE_RPM_HZ = 9.0            -- added on top at full rpm
+VehicleSeat.ENGINE_IDLE_AMPLITUDE = 0.0011 -- metres
+VehicleSeat.ENGINE_LOAD_AMPLITUDE = 0.0018 -- extra at full load
+VehicleSeat.ENGINE_PITCH_RATIO = 0.20      -- radians of shake per metre
+
+-- Guards. A physics hiccup or a teleport must not launch the springs.
+VehicleSeat.MAX_ACCELERATION = 45          -- m/s^2 per axis
+VehicleSeat.MAX_ANGULAR_ACCELERATION = 40  -- rad/s^2 per axis
+VehicleSeat.TELEPORT_DISTANCE = 4          -- m moved in one frame
+VehicleSeat.MAX_DT = 0.1                   -- s
+VehicleSeat.WARMUP_FRAMES = 3              -- samples needed before the springs run
+
+-- Set once, at load, by calibrateRotationSigns()
+VehicleSeat.signX = 1
+VehicleSeat.signY = 1
+VehicleSeat.signZ = 1
+
+---Work out which way setRotation turns things.
+--
+-- We measure the mount's orientation as three world referenced angles (how far
+-- its forward axis is raised, how far its right axis is raised, which way it
+-- points) and then have to feed the answer back through setRotation as Euler
+-- angles. Rather than assume the engine's handedness, ask it: rotate a scratch
+-- node by a known amount and see which way its axes went.
+function VehicleSeat.calibrateRotationSigns()
+    local probe = createTransformGroup("fpcRotationProbe")
+
+    setRotation(probe, 0.2, 0, 0)
+    local _, fy, _ = localDirectionToWorld(probe, 0, 0, 1)
+    VehicleSeat.signX = fy >= 0 and 1 or -1
+
+    setRotation(probe, 0, 0, 0.2)
+    local _, ry, _ = localDirectionToWorld(probe, 1, 0, 0)
+    VehicleSeat.signZ = ry >= 0 and 1 or -1
+
+    setRotation(probe, 0, 0.2, 0)
+    local fx, _, fz = localDirectionToWorld(probe, 0, 0, 1)
+    VehicleSeat.signY = math.atan2(fx, fz) >= 0 and 1 or -1
+
+    delete(probe)
+end
+
+---Node chain used to rebuild the camera's pose. frame carries the mount's world
+-- pose, delta carries our offsets in the mount's frame, and proxy carries the
+-- camera's pose relative to the mount so the offsets compose correctly.
+function VehicleSeat.getNodes()
+    if VehicleSeat.frameNode ~= nil and entityExists(VehicleSeat.frameNode) then
+        return VehicleSeat.frameNode, VehicleSeat.deltaNode, VehicleSeat.proxyNode
+    end
+
+    VehicleSeat.frameNode = createTransformGroup("fpcSeatFrame")
+    VehicleSeat.deltaNode = createTransformGroup("fpcSeatDelta")
+    VehicleSeat.proxyNode = createTransformGroup("fpcSeatProxy")
+    link(getRootNode(), VehicleSeat.frameNode)
+    link(VehicleSeat.frameNode, VehicleSeat.deltaNode)
+    link(VehicleSeat.deltaNode, VehicleSeat.proxyNode)
+
+    return VehicleSeat.frameNode, VehicleSeat.deltaNode, VehicleSeat.proxyNode
+end
+
+local function newState()
+    return {
+        -- One sample for a position, one for a velocity, one for an
+        -- acceleration. Until we have all three there is nothing to drive with.
+        warmup = VehicleSeat.WARMUP_FRAMES,
+        lastPosX = 0, lastPosY = 0, lastPosZ = 0,
+        lastVelX = 0, lastVelY = 0, lastVelZ = 0,
+        lastPitch = 0, lastRoll = 0, lastYaw = 0,
+        lastPitchRate = 0, lastRollRate = 0, lastYawRate = 0,
+        seatX = 0, seatY = 0, seatZ = 0,
+        seatVelX = 0, seatVelY = 0, seatVelZ = 0,
+        headPitch = 0, headRoll = 0, headYaw = 0,
+        headPitchVel = 0, headRollVel = 0, headYawVel = 0,
+        enginePhase = 0,
+    }
+end
+
+---Semi-implicit Euler on x'' = -w^2 x - 2 zeta w x' + drive, sub-stepped so the
+-- spring stays stable through a long frame.
+local function integrate(spring, position, velocity, drive, dts)
+    local w = spring.freq * math.pi * 2
+    local damping = 2 * spring.zeta * w
+    local stiffness = w * w
+
+    local remaining = dts
+    while remaining > 0 do
+        local step = math.min(remaining, 0.004)
+        remaining = remaining - step
+        local acc = -stiffness * position - damping * velocity + drive
+        velocity = velocity + acc * step
+        position = position + velocity * step
+    end
+
+    if position > spring.limit then
+        position, velocity = spring.limit, math.min(velocity, 0)
+    elseif position < -spring.limit then
+        position, velocity = -spring.limit, math.max(velocity, 0)
+    end
+
+    return position, velocity
+end
+
+local function wrapAngle(angle)
+    while angle > math.pi do angle = angle - math.pi * 2 end
+    while angle < -math.pi do angle = angle + math.pi * 2 end
+    return angle
+end
+
+---The node the camera hangs off. For an inside camera with position smoothing
+-- the camera itself lives under a detached world parent, so we have to go
+-- through cameraPositionNode to find the actual place in the vehicle.
+local function getMountNode(camera)
+    local node = camera.cameraPositionNode or camera.cameraNode
+    if node == nil then
+        return nil
+    end
+
+    local parent = getParent(node)
+    if parent ~= nil and parent ~= 0 and entityExists(parent) then
+        return parent
+    end
+
+    if camera.vehicle ~= nil and camera.vehicle.rootNode ~= nil then
+        return camera.vehicle.rootNode
+    end
+
+    return nil
+end
+
+function VehicleSeat.shouldApply(camera)
+    if not FPCSettings.get("vehicleEnabled") then
+        return false
+    end
+    if camera.cameraNode == nil or not entityExists(camera.cameraNode) then
+        return false
+    end
+    if not camera.isInside and not FPCSettings.get("vehicleOutsideCameras") then
+        return false
+    end
+    -- Head tracking owns the camera node outright; stay out of its way
+    if camera.headTrackingNode ~= nil and g_gameSettings:getValue(GameSettings.SETTING.IS_HEAD_TRACKING_ENABLED) then
+        return false
+    end
+    return true
+end
+
+---@param camera VehicleCamera
+---@param dt number frame time in ms
+function VehicleSeat.update(camera, dt)
+    if not VehicleSeat.shouldApply(camera) then
+        camera.fpcSeat = nil
+        return
+    end
+
+    local mountNode = getMountNode(camera)
+    if mountNode == nil then
+        return
+    end
+
+    local dts = math.clamp(dt * 0.001, 0, VehicleSeat.MAX_DT)
+    if dts <= 0 then
+        return
+    end
+
+    local state = camera.fpcSeat
+    if state == nil then
+        state = newState()
+        camera.fpcSeat = state
+    end
+
+    -- MEASURE -----------------------------------------------------------------
+    local posX, posY, posZ = getWorldTranslation(mountNode)
+    local fwdX, fwdY, fwdZ = localDirectionToWorld(mountNode, 0, 0, 1)
+    local rightX, rightY, rightZ = localDirectionToWorld(mountNode, 1, 0, 0)
+
+    -- World referenced attitude: how far the nose is raised, how far the right
+    -- side is raised, and which way we point.
+    local pitch = math.asin(math.clamp(fwdY, -1, 1))
+    local roll = math.asin(math.clamp(rightY, -1, 1))
+    local yaw = math.atan2(fwdX, fwdZ)
+
+    -- First frame after a reset has no previous sample to difference against.
+    if state.warmup >= VehicleSeat.WARMUP_FRAMES then
+        state.warmup = state.warmup - 1
+        state.lastPosX, state.lastPosY, state.lastPosZ = posX, posY, posZ
+        state.lastPitch, state.lastRoll, state.lastYaw = pitch, roll, yaw
+        return
+    end
+
+    local dx, dy, dz = posX - state.lastPosX, posY - state.lastPosY, posZ - state.lastPosZ
+
+    -- Teleport, vehicle reset, entering from a long way off: start again rather
+    -- than feed a several-metre jump into the springs.
+    if math.abs(dx) + math.abs(dy) + math.abs(dz) > VehicleSeat.TELEPORT_DISTANCE then
+        camera.fpcSeat = newState()
+        return
+    end
+
+    local velX, velY, velZ = dx / dts, dy / dts, dz / dts
+    local accX = math.clamp((velX - state.lastVelX) / dts, -VehicleSeat.MAX_ACCELERATION, VehicleSeat.MAX_ACCELERATION)
+    local accY = math.clamp((velY - state.lastVelY) / dts, -VehicleSeat.MAX_ACCELERATION, VehicleSeat.MAX_ACCELERATION)
+    local accZ = math.clamp((velZ - state.lastVelZ) / dts, -VehicleSeat.MAX_ACCELERATION, VehicleSeat.MAX_ACCELERATION)
+
+    -- Into the cab's own frame: x is sideways, y is up, z is fore/aft
+    local localAccX, localAccY, localAccZ = worldDirectionToLocal(mountNode, accX, accY, accZ)
+
+    local maxAngAcc = VehicleSeat.MAX_ANGULAR_ACCELERATION
+    local pitchRate = wrapAngle(pitch - state.lastPitch) / dts
+    local rollRate = wrapAngle(roll - state.lastRoll) / dts
+    local yawRate = wrapAngle(yaw - state.lastYaw) / dts
+    local pitchAcc = math.clamp((pitchRate - state.lastPitchRate) / dts, -maxAngAcc, maxAngAcc)
+    local rollAcc = math.clamp((rollRate - state.lastRollRate) / dts, -maxAngAcc, maxAngAcc)
+    local yawAcc = math.clamp((yawRate - state.lastYawRate) / dts, -maxAngAcc, maxAngAcc)
+
+    state.lastPosX, state.lastPosY, state.lastPosZ = posX, posY, posZ
+    state.lastVelX, state.lastVelY, state.lastVelZ = velX, velY, velZ
+    state.lastPitch, state.lastRoll, state.lastYaw = pitch, roll, yaw
+    state.lastPitchRate, state.lastRollRate, state.lastYawRate = pitchRate, rollRate, yawRate
+
+    -- Entering a moving vehicle would otherwise read the whole of its speed as a
+    -- single frame of acceleration and punch the springs into their limits.
+    if state.warmup > 0 then
+        state.warmup = state.warmup - 1
+        return
+    end
+
+    -- SEAT SPRINGS ------------------------------------------------------------
+    -- Negative drive: the seat gives way against whatever the cab is doing, so a
+    -- cab accelerating upwards leaves the seat behind and below.
+    local seatScale = FPCSettings.get("vehicleSeatScale")
+    local seat = VehicleSeat.SEAT
+
+    state.seatX, state.seatVelX = integrate(seat.lateral, state.seatX, state.seatVelX, -localAccX * seat.lateral.gain, dts)
+    state.seatY, state.seatVelY = integrate(seat.vertical, state.seatY, state.seatVelY, -localAccY * seat.vertical.gain, dts)
+    state.seatZ, state.seatVelZ = integrate(seat.longitudinal, state.seatZ, state.seatVelZ, -localAccZ * seat.longitudinal.gain, dts)
+
+    local offsetX = state.seatX * seatScale
+    local offsetY = state.seatY * seatScale
+    local offsetZ = state.seatZ * seatScale
+
+    -- HEAD SPRINGS ------------------------------------------------------------
+    local headScale = FPCSettings.get("vehicleHeadScale")
+    local head = VehicleSeat.HEAD
+
+    state.headPitch, state.headPitchVel = integrate(head.pitch, state.headPitch, state.headPitchVel, -pitchAcc * head.pitch.gain, dts)
+    state.headRoll, state.headRollVel = integrate(head.roll, state.headRoll, state.headRollVel, -rollAcc * head.roll.gain, dts)
+    state.headYaw, state.headYawVel = integrate(head.yaw, state.headYaw, state.headYawVel, -yawAcc * head.yaw.gain, dts)
+
+    local anglePitch = state.headPitch * headScale
+    local angleRoll = state.headRoll * headScale
+    local angleYaw = state.headYaw * headScale
+
+    -- ENGINE VIBRATION --------------------------------------------------------
+    local engineScale = FPCSettings.get("vehicleEngineScale")
+    local vehicle = camera.vehicle
+    if engineScale > 0 and vehicle ~= nil and vehicle.spec_motorized ~= nil
+        and vehicle.getIsMotorStarted ~= nil and vehicle:getIsMotorStarted() then
+
+        local rpm = math.clamp(vehicle:getMotorRpmPercentage() or 0, 0, 1)
+        local load = math.clamp(vehicle:getMotorLoadPercentage() or 0, 0, 1)
+
+        local frequency = VehicleSeat.ENGINE_BASE_HZ + VehicleSeat.ENGINE_RPM_HZ * rpm
+        state.enginePhase = state.enginePhase + frequency * math.pi * 2 * dts
+        if state.enginePhase > math.pi * 2 then
+            state.enginePhase = state.enginePhase - math.pi * 2
+        end
+
+        local amplitude = (VehicleSeat.ENGINE_IDLE_AMPLITUDE + VehicleSeat.ENGINE_LOAD_AMPLITUDE * load) * engineScale
+        -- Two components an octave apart so it reads as a rumble, not a hum
+        local shake = (math.sin(state.enginePhase) + math.sin(state.enginePhase * 2.13) * 0.4) * amplitude
+
+        offsetY = offsetY + shake
+        offsetX = offsetX + shake * 0.35
+        anglePitch = anglePitch + shake * VehicleSeat.ENGINE_PITCH_RATIO
+    end
+
+    if offsetX == 0 and offsetY == 0 and offsetZ == 0
+        and anglePitch == 0 and angleRoll == 0 and angleYaw == 0 then
+        return
+    end
+
+    -- APPLY -------------------------------------------------------------------
+    local frameNode, deltaNode, proxyNode = VehicleSeat.getNodes()
+
+    -- Park the chain on the mount with no offset, then hang the camera's current
+    -- pose off it. proxy now holds the camera's pose relative to the cab.
+    setTranslation(deltaNode, 0, 0, 0)
+    setRotation(deltaNode, 0, 0, 0)
+    setWorldTranslation(frameNode, posX, posY, posZ)
+    setWorldQuaternion(frameNode, getWorldQuaternion(mountNode))
+
+    local camX, camY, camZ = getWorldTranslation(camera.cameraNode)
+    local camQX, camQY, camQZ, camQW = getWorldQuaternion(camera.cameraNode)
+    setWorldTranslation(proxyNode, camX, camY, camZ)
+    setWorldQuaternion(proxyNode, camQX, camQY, camQZ, camQW)
+
+    -- Now move the cab out from under it and read where the camera ended up
+    setTranslation(deltaNode, offsetX, offsetY, offsetZ)
+    setRotation(deltaNode,
+        anglePitch * VehicleSeat.signX,
+        angleYaw * VehicleSeat.signY,
+        angleRoll * VehicleSeat.signZ)
+
+    local newX, newY, newZ = getWorldTranslation(proxyNode)
+    local newQX, newQY, newQZ, newQW = getWorldQuaternion(proxyNode)
+
+    setWorldTranslation(camera.cameraNode, newX, newY, newZ)
+    setWorldQuaternion(camera.cameraNode, newQX, newQY, newQZ, newQW)
+end

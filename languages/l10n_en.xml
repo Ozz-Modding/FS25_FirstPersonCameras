@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<l10n>
+	<translationContributors/>
+	<texts>
+		<!-- Input actions -->
+		<text name="input_FPC_TOGGLE_WALK" text="Toggle walking head movement"/>
+		<text name="input_FPC_TOGGLE_VEHICLE" text="Toggle vehicle seat suspension"/>
+
+		<!-- Toggle feedback -->
+		<text name="fpc_walk_on" text="Walking head movement: ON"/>
+		<text name="fpc_walk_off" text="Walking head movement: OFF"/>
+		<text name="fpc_vehicle_on" text="Vehicle seat suspension: ON"/>
+		<text name="fpc_vehicle_off" text="Vehicle seat suspension: OFF"/>
+
+		<!-- Settings page -->
+		<text name="fpc_setting_section" text="First Person Cameras"/>
+
+		<text name="fpc_setting_walkEnabled" text="Walking head movement"/>
+		<text name="fpc_setting_walkEnabled_tooltip" text="Adds head movement to the on-foot first person view. Same as the keybind."/>
+
+		<text name="fpc_setting_walkBobScale" text="Footstep bob"/>
+		<text name="fpc_setting_walkBobScale_tooltip" text="How much the view rises, falls and sways with each step. Scales with how fast you are moving."/>
+
+		<text name="fpc_setting_walkSwayScale" text="Handheld sway and breathing"/>
+		<text name="fpc_setting_walkSwayScale_tooltip" text="Slow drift that stops the view feeling locked to a tripod, plus breathing while you stand still."/>
+
+		<text name="fpc_setting_walkLandingScale" text="Landing impact"/>
+		<text name="fpc_setting_walkLandingScale_tooltip" text="The knee bend and nod when you land from a jump or a drop. Stronger the further you fall."/>
+
+		<text name="fpc_setting_vehicleEnabled" text="Vehicle seat suspension"/>
+		<text name="fpc_setting_vehicleEnabled_tooltip" text="Stops the view being welded to the cab, so it moves on a sprung seat instead. Same as the keybind."/>
+
+		<text name="fpc_setting_vehicleSeatScale" text="Seat travel"/>
+		<text name="fpc_setting_vehicleSeatScale_tooltip" text="How far the seat gives way under you over bumps, in corners and under braking."/>
+
+		<text name="fpc_setting_vehicleHeadScale" text="Head lag"/>
+		<text name="fpc_setting_vehicleHeadScale_tooltip" text="How much your head lags behind when the machine pitches and rolls, and leans in a corner."/>
+
+		<text name="fpc_setting_vehicleEngineScale" text="Engine vibration"/>
+		<text name="fpc_setting_vehicleEngineScale_tooltip" text="Vibration coming up through the seat. Rate follows engine revs, depth follows load."/>
+
+		<text name="fpc_setting_vehicleOutsideCameras" text="Apply to outdoor cameras"/>
+		<text name="fpc_setting_vehicleOutsideCameras_tooltip" text="Off by default. Turn on if you want the chase cameras to move on the suspension too."/>
+	</texts>
+</l10n>

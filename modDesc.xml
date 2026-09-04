@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8" standalone="no" ?>
+<modDesc descVersion="106">
+    <author>Ozz</author>
+    <version>1.0.0.0</version>
+    <iconFilename>icon_FirstPersonCameras.dds</iconFilename>
+    <title>
+        <en>First Person Cameras</en>
+    </title>
+    <description>
+        <en><![CDATA[First Person Cameras
+
+Two separate effects, each with its own keybind:
+
+ON FOOT (default Right Ctrl + B)
+Adds head movement to the first person view - footstep bob, body sway, a slow
+handheld drift, breathing while you stand still, and a knee-bend jolt when you
+land from a fall or a jump.
+
+IN A VEHICLE (default Right Ctrl + N)
+Simulates a suspended seat. Instead of your head being welded to the cab, the
+seat and your body lag behind as the tractor pitches, rolls and bounces, then
+settle back. You lean into corners, rock forward under braking, and get a shove
+in the back when the machine drops into a rut. Engine vibration comes through
+the seat too.
+
+Everything is tunable from the game's Settings page, including turning
+individual parts of each effect down or off. Purely visual - no gameplay or
+multiplayer impact.
+]]>
+        </en>
+    </description>
+
+    <extraSourceFiles>
+        <sourceFile filename="src/FPCSettings.lua"/>
+        <sourceFile filename="src/WalkCamera.lua"/>
+        <sourceFile filename="src/VehicleSeat.lua"/>
+        <sourceFile filename="src/main.lua"/>
+    </extraSourceFiles>
+
+    <l10n filenamePrefix="languages/l10n" />
+
+    <multiplayer supported="true"/>
+
+    <actions>
+        <action name="FPC_TOGGLE_WALK" category="ONFOOT VEHICLE" axisType="HALF" ignoreComboMask="false" />
+        <action name="FPC_TOGGLE_VEHICLE" category="ONFOOT VEHICLE" axisType="HALF" ignoreComboMask="false" />
+    </actions>
+
+    <inputBinding>
+        <actionBinding action="FPC_TOGGLE_WALK">
+            <binding device="KB_MOUSE_DEFAULT" input="KEY_rctrl KEY_b" />
+        </actionBinding>
+        <actionBinding action="FPC_TOGGLE_VEHICLE">
+            <binding device="KB_MOUSE_DEFAULT" input="KEY_rctrl KEY_n" />
+        </actionBinding>
+    </inputBinding>
+</modDesc>
