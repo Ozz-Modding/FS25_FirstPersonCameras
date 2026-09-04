@@ -24,15 +24,29 @@
 WalkCamera = {}
 
 -- Footstep bob ---------------------------------------------------------------
-WalkCamera.STRIDE_LENGTH_WALK = 0.85       -- metres per step at a walk
-WalkCamera.STRIDE_LENGTH_RUN = 1.35        -- metres per step flat out
+--
+-- Stride lengths are longer than a real person's. The game walks at 4 m/s and
+-- runs at 7, which are not human speeds, so deriving cadence from the real
+-- figure of roughly 0.85 m per step gives nearly five steps a second - a frantic
+-- flutter rather than a walk. Stretching the stride keeps the cadence at a
+-- believable two-ish steps a second across the whole speed range.
+WalkCamera.STRIDE_LENGTH_WALK = 1.85       -- metres per step at a walk
+WalkCamera.STRIDE_LENGTH_RUN = 2.60        -- metres per step flat out
+WalkCamera.MAX_CADENCE = 3.0               -- steps per second, hard ceiling
 WalkCamera.RUN_SPEED = 7                   -- PlayerStateWalk.MAXIMUM_RUN_SPEED
 WalkCamera.WALK_SPEED = 4                  -- PlayerStateWalk.MAXIMUM_WALK_SPEED
 
-WalkCamera.BOB_VERTICAL = 0.030            -- metres, peak, at full run
-WalkCamera.BOB_LATERAL = 0.022
-WalkCamera.BOB_ROLL = 0.0105               -- radians, ~0.6 degrees
-WalkCamera.BOB_PITCH = 0.0060
+-- Weighted towards side to side rather than up and down: walking rolls you from
+-- one leg to the other far more than it lifts you.
+WalkCamera.BOB_VERTICAL = 0.020            -- metres, peak, at full run
+WalkCamera.BOB_LATERAL = 0.052
+WalkCamera.BOB_ROLL = 0.0165               -- radians, ~0.95 degrees
+WalkCamera.BOB_PITCH = 0.0040
+
+-- Low pass on the gait layers. Frame time and the player's own speed both jitter
+-- a little, and that jitter lands straight on the bob as a shimmer; a short
+-- smooth removes it without any visible lag.
+WalkCamera.SMOOTHING_RATE = 22             -- per second
 
 -- Handheld sway --------------------------------------------------------------
 WalkCamera.SWAY_PITCH = 0.0038             -- radians, ~0.22 degrees
@@ -69,6 +83,11 @@ WalkCamera.state = {
     lastAirVelocityY = 0,
     idleBlend = 0,
     speedSmoothed = 0,
+    smoothedX = 0,
+    smoothedY = 0,
+    smoothedPitch = 0,
+    smoothedYaw = 0,
+    smoothedRoll = 0,
 }
 
 ---Insert our own transform between the camera root and the first person camera.
@@ -102,6 +121,11 @@ function WalkCamera.reset(camera)
     state.landVelocity = 0
     state.idleBlend = 0
     state.speedSmoothed = 0
+    state.smoothedX = 0
+    state.smoothedY = 0
+    state.smoothedPitch = 0
+    state.smoothedYaw = 0
+    state.smoothedRoll = 0
 
     if camera ~= nil and camera.fpcOffsetNode ~= nil and entityExists(camera.fpcOffsetNode) then
         setTranslation(camera.fpcOffsetNode, 0, 0, 0)
@@ -109,11 +133,13 @@ function WalkCamera.reset(camera)
     end
 end
 
----Stride length grows with speed - you do not jog with a walking gait.
-local function getStrideLength(speed)
+---Steps per second. Stride grows with speed - you do not jog with a walking
+-- gait - so cadence rises far more slowly than speed does.
+local function getCadence(speed)
     local t = math.clamp((speed - WalkCamera.WALK_SPEED * 0.4)
         / (WalkCamera.RUN_SPEED - WalkCamera.WALK_SPEED * 0.4), 0, 1)
-    return MathUtil.lerp(WalkCamera.STRIDE_LENGTH_WALK, WalkCamera.STRIDE_LENGTH_RUN, t)
+    local stride = MathUtil.lerp(WalkCamera.STRIDE_LENGTH_WALK, WalkCamera.STRIDE_LENGTH_RUN, t)
+    return math.min(speed / stride, WalkCamera.MAX_CADENCE)
 end
 
 ---@param camera PlayerCamera
@@ -173,7 +199,7 @@ function WalkCamera.update(camera, dt)
     if bobScale > 0 then
         if isMoving then
             -- One stride is two steps, so advance pi per step.
-            state.stridePhase = state.stridePhase + (speed / getStrideLength(speed)) * math.pi * dts
+            state.stridePhase = state.stridePhase + getCadence(speed) * math.pi * dts
             if state.stridePhase > math.pi * 2 then
                 state.stridePhase = state.stridePhase - math.pi * 2
             end
@@ -190,8 +216,13 @@ function WalkCamera.update(camera, dt)
         intensity = intensity * bobScale * (1 - state.idleBlend)
 
         local phase = state.stridePhase
-        -- Vertical dips once per step, side to side once per stride
-        offsetY = offsetY - math.abs(math.sin(phase)) * WalkCamera.BOB_VERTICAL * intensity
+        -- Vertical dips once per step, side to side once per stride.
+        --
+        -- The vertical curve is a plain cosine at twice the stride rate, not
+        -- abs(sin). abs(sin) has the right shape on paper but a corner at every
+        -- footfall, and a corner in position is an instant reversal of velocity:
+        -- that reads as a judder twice a step, not as a footfall.
+        offsetY = offsetY - math.cos(phase * 2) * WalkCamera.BOB_VERTICAL * 0.5 * intensity
         offsetX = offsetX + math.sin(phase) * WalkCamera.BOB_LATERAL * intensity
         roll = roll + math.sin(phase) * WalkCamera.BOB_ROLL * intensity
         pitch = pitch + math.cos(phase * 2) * WalkCamera.BOB_PITCH * intensity
@@ -225,6 +256,21 @@ function WalkCamera.update(camera, dt)
         offsetY = offsetY + breath * WalkCamera.BREATH_VERTICAL
         pitch = pitch + breath * WalkCamera.BREATH_PITCH
     end
+
+    -- SMOOTH ------------------------------------------------------------------
+    -- Everything above is driven by the player's speed and by frame time, both of
+    -- which jitter frame to frame. That jitter lands directly on the bob and
+    -- reads as a shimmer, so low pass the gait layers here. The landing spring is
+    -- added afterwards and deliberately left sharp.
+    local alpha = math.min(1, dts * WalkCamera.SMOOTHING_RATE)
+    state.smoothedX = state.smoothedX + (offsetX - state.smoothedX) * alpha
+    state.smoothedY = state.smoothedY + (offsetY - state.smoothedY) * alpha
+    state.smoothedPitch = state.smoothedPitch + (pitch - state.smoothedPitch) * alpha
+    state.smoothedYaw = state.smoothedYaw + (yaw - state.smoothedYaw) * alpha
+    state.smoothedRoll = state.smoothedRoll + (roll - state.smoothedRoll) * alpha
+
+    offsetX, offsetY = state.smoothedX, state.smoothedY
+    pitch, yaw, roll = state.smoothedPitch, state.smoothedYaw, state.smoothedRoll
 
     -- 4. LANDING RECOIL -------------------------------------------------------
     if landScale > 0 then

@@ -86,6 +86,17 @@ It also switches the input context back before it returns, so registering after 
 re-entering the target context puts the binding in whichever context happened to be current. The
 hook re-enters it explicitly.
 
+## One trap in the gait curve
+
+The vertical bob is `-cos(2 * stridePhase)`, not `abs(sin(stridePhase))`. `abs(sin)` is the shape
+you reach for — a dip per step, never rising above the neutral line — but it has a corner at every
+footfall, and a corner in position is an instantaneous reversal of velocity. That reads as a judder
+twice a step rather than as a footfall. Any replacement curve has to be smooth at the footfall.
+
+Cadence is also deliberately not derived from real stride lengths. The game walks at 4 m/s and runs
+at 7, which are not human speeds; feeding those into a real 0.85 m stride gives nearly five steps a
+second. The stride constants are stretched to keep cadence around two steps a second instead.
+
 ## Tuning
 
 Every amplitude and spring parameter is a named constant at the top of `WalkCamera.lua` and
