@@ -37,18 +37,34 @@ VehicleSeat = {}
 -- Seat springs. Frequency in Hz, zeta is the damping ratio, gain is how much of
 -- the cab's acceleration the seat actually gives way to.
 --
--- Steady state travel is gain / omega^2 per unit of cab acceleration, so a soft
--- spring moves further for the same gain. The numbers below work out at roughly
--- 35 mm of vertical travel and 20 mm of lateral travel per 1g, which is about
--- what a real air seat gives and is clearly visible without being seasick.
+-- `gain` is the coefficient on the cab's acceleration in
+--
+--     x'' = -w^2 x - 2 zeta w x' - gain * a_cab
+--
+-- where x is the seat's position relative to the cab. For a mass on a spring
+-- whose base is being shaken - which is exactly what a seat is - the textbook
+-- coefficient is **1.0**. Anything less is a fudge that quietly makes the seat
+-- stiffer than its stated frequency, and it was the reason the vertical axis
+-- looked welded to the wheel: at 0.33 a firm bump moved the view 17 mm.
+--
+-- So vertical runs at the honest 1.0 and is held in check by `limit` instead.
+-- Lateral and fore/aft keep a reduced gain on purpose: a seat barely slides in
+-- those directions, what moves is your body, and you are braced against it.
 VehicleSeat.SEAT = {
-    -- vertical: a soft air seat, around 1.5 Hz, deliberately underdamped so it
+    -- 1.3 Hz and underdamped, which is where a real tractor air seat sits: it
     -- rebounds once rather than deadening the hit
-    vertical   = { freq = 1.55, zeta = 0.34, gain = 0.330, limit = 0.16 },
-    -- lateral and fore/aft: much stiffer, you are braced against those
-    lateral    = { freq = 2.30, zeta = 0.50, gain = 0.420, limit = 0.10 },
-    longitudinal = { freq = 2.10, zeta = 0.48, gain = 0.350, limit = 0.10 },
+    vertical   = { freq = 1.30, zeta = 0.32, gain = 1.00, limit = 0.10 },
+    lateral    = { freq = 2.00, zeta = 0.50, gain = 0.50, limit = 0.06 },
+    longitudinal = { freq = 1.90, zeta = 0.48, gain = 0.50, limit = 0.06 },
 }
+
+-- Vehicle transforms are written by the physics step, which does not line up
+-- with the render frame. On frames between physics steps the cab has not moved
+-- at all, so a raw double difference comes out as a spike train - zero, zero,
+-- enormous - rather than a smooth acceleration. Low pass it before it reaches
+-- the springs; the energy is the same but the springs get a signal they can
+-- actually follow instead of a series of hammer blows.
+VehicleSeat.ACCELERATION_FILTER_HZ = 18
 
 -- Head springs, driven by angular acceleration. Radians. Around 1.5 degrees of
 -- lean per 5 rad/s^2, which is a firm but not violent bump.
@@ -84,6 +100,7 @@ VehicleSeat.WARMUP_FRAMES = 3              -- samples needed before the springs 
 VehicleSeat.debug = {
     enabled = false,
     peakDecay = 0.6,        -- per second
+    frames = 0, stillFrames = 0, dt = 0,
     accX = 0, accY = 0, accZ = 0,
     angPitch = 0, angRoll = 0, angYaw = 0,
     seatX = 0, seatY = 0, seatZ = 0,
@@ -152,6 +169,8 @@ local function newState()
         lastVelX = 0, lastVelY = 0, lastVelZ = 0,
         lastPitch = 0, lastRoll = 0, lastYaw = 0,
         lastPitchRate = 0, lastRollRate = 0, lastYawRate = 0,
+        filteredAccX = 0, filteredAccY = 0, filteredAccZ = 0,
+        filteredPitchAcc = 0, filteredRollAcc = 0, filteredYawAcc = 0,
         seatX = 0, seatY = 0, seatZ = 0,
         seatVelX = 0, seatVelY = 0, seatVelZ = 0,
         headPitch = 0, headRoll = 0, headYaw = 0,
@@ -302,12 +321,32 @@ function VehicleSeat.update(camera, dt)
     state.lastPitch, state.lastRoll, state.lastYaw = pitch, roll, yaw
     state.lastPitchRate, state.lastRollRate, state.lastYawRate = pitchRate, rollRate, yawRate
 
+    if VehicleSeat.debug.enabled then
+        VehicleSeat.debug.frames = VehicleSeat.debug.frames + 1
+        if dx == 0 and dy == 0 and dz == 0 then
+            VehicleSeat.debug.stillFrames = VehicleSeat.debug.stillFrames + 1
+        end
+        VehicleSeat.debug.dt = dts
+    end
+
     -- Entering a moving vehicle would otherwise read the whole of its speed as a
     -- single frame of acceleration and punch the springs into their limits.
     if state.warmup > 0 then
         state.warmup = state.warmup - 1
         return
     end
+
+    -- One pole low pass, see ACCELERATION_FILTER_HZ
+    local accAlpha = math.min(1, dts * VehicleSeat.ACCELERATION_FILTER_HZ * math.pi * 2)
+    state.filteredAccX = state.filteredAccX + (localAccX - state.filteredAccX) * accAlpha
+    state.filteredAccY = state.filteredAccY + (localAccY - state.filteredAccY) * accAlpha
+    state.filteredAccZ = state.filteredAccZ + (localAccZ - state.filteredAccZ) * accAlpha
+    state.filteredPitchAcc = state.filteredPitchAcc + (pitchAcc - state.filteredPitchAcc) * accAlpha
+    state.filteredRollAcc = state.filteredRollAcc + (rollAcc - state.filteredRollAcc) * accAlpha
+    state.filteredYawAcc = state.filteredYawAcc + (yawAcc - state.filteredYawAcc) * accAlpha
+
+    localAccX, localAccY, localAccZ = state.filteredAccX, state.filteredAccY, state.filteredAccZ
+    pitchAcc, rollAcc, yawAcc = state.filteredPitchAcc, state.filteredRollAcc, state.filteredYawAcc
 
     -- SEAT SPRINGS ------------------------------------------------------------
     -- Negative drive: the seat gives way against whatever the cab is doing, so a
@@ -439,10 +478,16 @@ function VehicleSeat.drawDebug()
         d.seatX * 1000, d.seatY * 1000, d.seatZ * 1000))
     line(string.format("head lean   pitch %6.2f  roll %6.2f  yaw %6.2f  deg",
         math.deg(d.headPitch), math.deg(d.headRoll), math.deg(d.headYaw)))
+    -- A high still-frame count means the render rate is outrunning the physics
+    -- step, so the cab transform is being sampled more often than it changes.
+    line(string.format("frame %5.1f ms   frames with no cab movement: %4.1f %%",
+        d.dt * 1000, d.frames > 0 and (d.stillFrames / d.frames * 100) or 0))
 end
 
 function VehicleSeat.consoleCommandDebug()
     VehicleSeat.debug.enabled = not VehicleSeat.debug.enabled
+    VehicleSeat.debug.frames = 0
+    VehicleSeat.debug.stillFrames = 0
     return string.format("First Person Cameras debug readout %s",
         VehicleSeat.debug.enabled and "on" or "off")
 end

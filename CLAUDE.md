@@ -100,14 +100,28 @@ second. The stride constants are stretched to keep cadence around two steps a se
 ## Tuning the vehicle springs
 
 `fpcDebug` in the console toggles a peak-held readout of what the springs are actually being fed —
-cab acceleration, cab angular acceleration, and the resulting seat travel and head lean. Use it
-before changing a gain; the first pass at these numbers was guessed and came out roughly four times
-too weak.
+cab acceleration, cab angular acceleration, the resulting seat travel and head lean, and the share of
+frames on which the cab did not move at all. Use it before changing a gain.
 
-Steady state travel is `gain / omega^2` per unit of cab acceleration, so a softer spring moves
-further for the same gain and the two cannot be tuned independently. Current numbers work out at
-about 35 mm of vertical seat travel and 20 mm of lateral per 1g, and about 1.5 degrees of head lean
-per 5 rad/s^2.
+That last figure matters: vehicle transforms are written by the physics step, not the render frame,
+so when the frame rate outruns the physics rate a raw double difference comes out as a spike train
+(zero, zero, enormous) rather than an acceleration. `ACCELERATION_FILTER_HZ` low passes it back into
+something the springs can follow. A high still-frame percentage with jittery output means that filter
+needs to come down.
+
+**The vertical `gain` is 1.0 and should stay there.** The spring is
+
+    x'' = -w^2 x - 2 zeta w x' - gain * a_cab
+
+with `x` the seat's position relative to the cab. For a mass on a spring whose base is being shaken —
+which is what a seat is — the textbook coefficient on base acceleration is exactly 1. Any smaller
+value is a fudge that makes the seat stiffer than its stated frequency claims, and that is what made
+the vertical axis look welded to the wheel: at 0.33 a firm bump moved the view 17 mm. Use `limit` to
+keep the travel sane, not the gain. Lateral and fore/aft keep a reduced gain deliberately, because a
+seat barely slides sideways — what moves there is your braced body, not the seat.
+
+Travel is `gain / omega^2` per unit of cab acceleration, so a softer spring moves further for the
+same gain and the two cannot be tuned independently.
 
 **Engine vibration frequencies must stay well under the frame rate.** Anything approaching half of
 it aliases — the samples walk around the waveform instead of tracing it — and the result is a
