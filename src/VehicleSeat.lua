@@ -58,12 +58,10 @@ VehicleSeat.SEAT = {
     longitudinal = { freq = 1.90, zeta = 0.48, gain = 0.50, limit = 0.06 },
 }
 
--- Vehicle transforms are written by the physics step, which does not line up
--- with the render frame. On frames between physics steps the cab has not moved
--- at all, so a raw double difference comes out as a spike train - zero, zero,
--- enormous - rather than a smooth acceleration. Low pass it before it reaches
--- the springs; the energy is the same but the springs get a signal they can
--- actually follow instead of a series of hammer blows.
+-- Smoothing on the measured acceleration. The physics/render rate mismatch is
+-- handled properly in update() by measuring against physics time; this is just
+-- to take the edge off what is left, since differencing a position twice always
+-- amplifies noise.
 VehicleSeat.ACCELERATION_FILTER_HZ = 18
 
 -- Head springs, driven by angular acceleration. Radians. Around 1.5 degrees of
@@ -91,7 +89,8 @@ VehicleSeat.ENGINE_PITCH_RATIO = 0.20      -- radians of shake per metre
 -- Guards. A physics hiccup or a teleport must not launch the springs.
 VehicleSeat.MAX_ACCELERATION = 60          -- m/s^2 per axis
 VehicleSeat.MAX_ANGULAR_ACCELERATION = 60  -- rad/s^2 per axis
-VehicleSeat.TELEPORT_DISTANCE = 4          -- m moved in one frame
+VehicleSeat.TELEPORT_SPEED = 60            -- m/s; nothing in the game goes faster
+VehicleSeat.TELEPORT_MARGIN = 1            -- m of slack on top
 VehicleSeat.MAX_DT = 0.1                   -- s
 VehicleSeat.WARMUP_FRAMES = 3              -- samples needed before the springs run
 
@@ -169,6 +168,7 @@ local function newState()
         lastVelX = 0, lastVelY = 0, lastVelZ = 0,
         lastPitch = 0, lastRoll = 0, lastYaw = 0,
         lastPitchRate = 0, lastRollRate = 0, lastYawRate = 0,
+        sampleDt = 0,
         filteredAccX = 0, filteredAccY = 0, filteredAccZ = 0,
         filteredPitchAcc = 0, filteredRollAcc = 0, filteredYawAcc = 0,
         seatX = 0, seatY = 0, seatZ = 0,
@@ -177,6 +177,18 @@ local function newState()
         headPitchVel = 0, headRollVel = 0, headYawVel = 0,
         enginePhase = 0,
     }
+end
+
+---Throw away the measurement history without touching the springs, so a
+-- teleport or a stall stops driving them but whatever they are already doing
+-- rings down naturally instead of snapping to centre.
+function VehicleSeat.resetMeasurement(state)
+    state.warmup = VehicleSeat.WARMUP_FRAMES
+    state.sampleDt = 0
+    state.lastVelX, state.lastVelY, state.lastVelZ = 0, 0, 0
+    state.lastPitchRate, state.lastRollRate, state.lastYawRate = 0, 0, 0
+    state.filteredAccX, state.filteredAccY, state.filteredAccZ = 0, 0, 0
+    state.filteredPitchAcc, state.filteredRollAcc, state.filteredYawAcc = 0, 0, 0
 end
 
 ---Semi-implicit Euler on x'' = -w^2 x - 2 zeta w x' + drive, sub-stepped so the
@@ -291,62 +303,107 @@ function VehicleSeat.update(camera, dt)
         return
     end
 
-    local dx, dy, dz = posX - state.lastPosX, posY - state.lastPosY, posZ - state.lastPosZ
-
-    -- Teleport, vehicle reset, entering from a long way off: start again rather
-    -- than feed a several-metre jump into the springs.
-    if math.abs(dx) + math.abs(dy) + math.abs(dz) > VehicleSeat.TELEPORT_DISTANCE then
-        camera.fpcSeat = newState()
-        return
+    -- Differentiate against physics time, never against frame time.
+    --
+    -- Vehicle transforms are written by the physics step. Render frames in
+    -- between see the cab exactly where they saw it last, so differentiating
+    -- every frame samples a staircase: velocity alternates between zero and a
+    -- double step, and acceleration between plus and minus something enormous.
+    --
+    -- It is worst by far on the fore/aft axis, because that is the axis carrying
+    -- the vehicle's actual travel. At 30 km/h the cab steps 138 mm per physics
+    -- tick, and the fiction that falls out of differentiating that staircase
+    -- reads over a thousand m/s^2 while the true value is zero - easily enough
+    -- to slam the fore/aft spring into its travel limit and back. That was the
+    -- sharp lurching on smooth ground.
+    --
+    -- It also scales with frame rate, and vanishes when the render rate happens
+    -- to equal the physics rate, which is a good way to convince yourself the
+    -- code is fine when it is not.
+    --
+    -- g_physicsDtNonInterpolated is how much the physics actually advanced this
+    -- frame, and it is zero on frames where it did not step at all. Accumulate
+    -- that, and take a measurement only when it is non-zero. The springs still
+    -- integrate every frame so the output stays smooth; only the measurement
+    -- waits for something new to measure.
+    local physicsStep = g_physicsDtNonInterpolated
+    if physicsStep == nil then
+        physicsStep = dt        -- no physics clock available, fall back to frame time
     end
+    state.sampleDt = state.sampleDt + physicsStep * 0.001
 
-    local velX, velY, velZ = dx / dts, dy / dts, dz / dts
-    local accX = math.clamp((velX - state.lastVelX) / dts, -VehicleSeat.MAX_ACCELERATION, VehicleSeat.MAX_ACCELERATION)
-    local accY = math.clamp((velY - state.lastVelY) / dts, -VehicleSeat.MAX_ACCELERATION, VehicleSeat.MAX_ACCELERATION)
-    local accZ = math.clamp((velZ - state.lastVelZ) / dts, -VehicleSeat.MAX_ACCELERATION, VehicleSeat.MAX_ACCELERATION)
-
-    -- Into the cab's own frame: x is sideways, y is up, z is fore/aft
-    local localAccX, localAccY, localAccZ = worldDirectionToLocal(mountNode, accX, accY, accZ)
-
-    local maxAngAcc = VehicleSeat.MAX_ANGULAR_ACCELERATION
-    local pitchRate = wrapAngle(pitch - state.lastPitch) / dts
-    local rollRate = wrapAngle(roll - state.lastRoll) / dts
-    local yawRate = wrapAngle(yaw - state.lastYaw) / dts
-    local pitchAcc = math.clamp((pitchRate - state.lastPitchRate) / dts, -maxAngAcc, maxAngAcc)
-    local rollAcc = math.clamp((rollRate - state.lastRollRate) / dts, -maxAngAcc, maxAngAcc)
-    local yawAcc = math.clamp((yawRate - state.lastYawRate) / dts, -maxAngAcc, maxAngAcc)
-
-    state.lastPosX, state.lastPosY, state.lastPosZ = posX, posY, posZ
-    state.lastVelX, state.lastVelY, state.lastVelZ = velX, velY, velZ
-    state.lastPitch, state.lastRoll, state.lastYaw = pitch, roll, yaw
-    state.lastPitchRate, state.lastRollRate, state.lastYawRate = pitchRate, rollRate, yawRate
+    local hasNewSample = state.sampleDt > 0
 
     if VehicleSeat.debug.enabled then
         VehicleSeat.debug.frames = VehicleSeat.debug.frames + 1
-        if dx == 0 and dy == 0 and dz == 0 then
+        if not hasNewSample then
             VehicleSeat.debug.stillFrames = VehicleSeat.debug.stillFrames + 1
         end
         VehicleSeat.debug.dt = dts
     end
 
-    -- Entering a moving vehicle would otherwise read the whole of its speed as a
-    -- single frame of acceleration and punch the springs into their limits.
+    if hasNewSample then
+        local sampleDt = state.sampleDt
+        state.sampleDt = 0
+
+        local dx, dy, dz = posX - state.lastPosX, posY - state.lastPosY, posZ - state.lastPosZ
+
+        -- Teleport, vehicle reset, a long stall: anything faster than any vehicle
+        -- in the game can plausibly travel is not real movement. Judge it against
+        -- the time actually elapsed, or a long frame at speed reads as a jump.
+        local distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if distance > VehicleSeat.TELEPORT_SPEED * sampleDt + VehicleSeat.TELEPORT_MARGIN then
+            -- Drop the measurement history but leave the springs alone, so they
+            -- ring down naturally instead of snapping to centre.
+            VehicleSeat.resetMeasurement(state)
+            return
+        end
+
+        local velX, velY, velZ = dx / sampleDt, dy / sampleDt, dz / sampleDt
+        local maxAcc = VehicleSeat.MAX_ACCELERATION
+        local accX = math.clamp((velX - state.lastVelX) / sampleDt, -maxAcc, maxAcc)
+        local accY = math.clamp((velY - state.lastVelY) / sampleDt, -maxAcc, maxAcc)
+        local accZ = math.clamp((velZ - state.lastVelZ) / sampleDt, -maxAcc, maxAcc)
+
+        -- Into the cab's own frame: x is sideways, y is up, z is fore/aft
+        local localAccX, localAccY, localAccZ = worldDirectionToLocal(mountNode, accX, accY, accZ)
+
+        local maxAngAcc = VehicleSeat.MAX_ANGULAR_ACCELERATION
+        local pitchRate = wrapAngle(pitch - state.lastPitch) / sampleDt
+        local rollRate = wrapAngle(roll - state.lastRoll) / sampleDt
+        local yawRate = wrapAngle(yaw - state.lastYaw) / sampleDt
+        local pitchAcc = math.clamp((pitchRate - state.lastPitchRate) / sampleDt, -maxAngAcc, maxAngAcc)
+        local rollAcc = math.clamp((rollRate - state.lastRollRate) / sampleDt, -maxAngAcc, maxAngAcc)
+        local yawAcc = math.clamp((yawRate - state.lastYawRate) / sampleDt, -maxAngAcc, maxAngAcc)
+
+        state.lastPosX, state.lastPosY, state.lastPosZ = posX, posY, posZ
+        state.lastVelX, state.lastVelY, state.lastVelZ = velX, velY, velZ
+        state.lastPitch, state.lastRoll, state.lastYaw = pitch, roll, yaw
+        state.lastPitchRate, state.lastRollRate, state.lastYawRate = pitchRate, rollRate, yawRate
+
+        if state.warmup > 0 then
+            -- Entering a moving vehicle would otherwise read the whole of its
+            -- speed as one sample of acceleration and punch the springs flat
+            -- into their limits.
+            state.warmup = state.warmup - 1
+        else
+            -- One pole low pass, see ACCELERATION_FILTER_HZ
+            local a = math.min(1, sampleDt * VehicleSeat.ACCELERATION_FILTER_HZ * math.pi * 2)
+            state.filteredAccX = state.filteredAccX + (localAccX - state.filteredAccX) * a
+            state.filteredAccY = state.filteredAccY + (localAccY - state.filteredAccY) * a
+            state.filteredAccZ = state.filteredAccZ + (localAccZ - state.filteredAccZ) * a
+            state.filteredPitchAcc = state.filteredPitchAcc + (pitchAcc - state.filteredPitchAcc) * a
+            state.filteredRollAcc = state.filteredRollAcc + (rollAcc - state.filteredRollAcc) * a
+            state.filteredYawAcc = state.filteredYawAcc + (yawAcc - state.filteredYawAcc) * a
+        end
+    end
+
     if state.warmup > 0 then
-        state.warmup = state.warmup - 1
         return
     end
 
-    -- One pole low pass, see ACCELERATION_FILTER_HZ
-    local accAlpha = math.min(1, dts * VehicleSeat.ACCELERATION_FILTER_HZ * math.pi * 2)
-    state.filteredAccX = state.filteredAccX + (localAccX - state.filteredAccX) * accAlpha
-    state.filteredAccY = state.filteredAccY + (localAccY - state.filteredAccY) * accAlpha
-    state.filteredAccZ = state.filteredAccZ + (localAccZ - state.filteredAccZ) * accAlpha
-    state.filteredPitchAcc = state.filteredPitchAcc + (pitchAcc - state.filteredPitchAcc) * accAlpha
-    state.filteredRollAcc = state.filteredRollAcc + (rollAcc - state.filteredRollAcc) * accAlpha
-    state.filteredYawAcc = state.filteredYawAcc + (yawAcc - state.filteredYawAcc) * accAlpha
-
-    localAccX, localAccY, localAccZ = state.filteredAccX, state.filteredAccY, state.filteredAccZ
-    pitchAcc, rollAcc, yawAcc = state.filteredPitchAcc, state.filteredRollAcc, state.filteredYawAcc
+    local localAccX, localAccY, localAccZ = state.filteredAccX, state.filteredAccY, state.filteredAccZ
+    local pitchAcc, rollAcc, yawAcc = state.filteredPitchAcc, state.filteredRollAcc, state.filteredYawAcc
 
     -- SEAT SPRINGS ------------------------------------------------------------
     -- Negative drive: the seat gives way against whatever the cab is doing, so a
@@ -478,9 +535,10 @@ function VehicleSeat.drawDebug()
         d.seatX * 1000, d.seatY * 1000, d.seatZ * 1000))
     line(string.format("head lean   pitch %6.2f  roll %6.2f  yaw %6.2f  deg",
         math.deg(d.headPitch), math.deg(d.headRoll), math.deg(d.headYaw)))
-    -- A high still-frame count means the render rate is outrunning the physics
-    -- step, so the cab transform is being sampled more often than it changes.
-    line(string.format("frame %5.1f ms   frames with no cab movement: %4.1f %%",
+    -- Frames on which the physics did not step. High is normal and harmless
+    -- above 60 fps; it is only a problem if something starts differentiating
+    -- against frame time again.
+    line(string.format("frame %5.1f ms   frames with no physics step: %4.1f %%",
         d.dt * 1000, d.frames > 0 and (d.stillFrames / d.frames * 100) or 0))
 end
 

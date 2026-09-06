@@ -103,11 +103,26 @@ second. The stride constants are stretched to keep cadence around two steps a se
 cab acceleration, cab angular acceleration, the resulting seat travel and head lean, and the share of
 frames on which the cab did not move at all. Use it before changing a gain.
 
-That last figure matters: vehicle transforms are written by the physics step, not the render frame,
-so when the frame rate outruns the physics rate a raw double difference comes out as a spike train
-(zero, zero, enormous) rather than an acceleration. `ACCELERATION_FILTER_HZ` low passes it back into
-something the springs can follow. A high still-frame percentage with jittery output means that filter
-needs to come down.
+**Never differentiate the cab's transform against frame time.** Vehicle transforms are written by
+the physics step, so render frames in between see the cab exactly where they saw it last.
+Differentiating that every frame samples a staircase, and the fiction that falls out is enormous —
+on flat ground at 30 km/h it reads over 1000 m/s² of fore/aft acceleration where the truth is zero,
+which is more than enough to slam the fore/aft spring into its travel limit and back. Fore/aft is
+always the worst axis because it is the one carrying the vehicle's actual travel.
+
+Two things make this easy to get wrong. It scales with frame rate, and it **disappears entirely when
+the render rate equals the physics rate** — so testing at a locked 60 fps says the code is fine when
+it is not.
+
+The fix in `update()` is to accumulate `g_physicsDtNonInterpolated`, which is how far the physics
+actually advanced this frame and is zero on frames where it did not step, and to take a measurement
+only when that accumulator is non-zero, dividing by it. That gives zero fiction at every frame rate
+tested (30 through 240) and passes a real 1.5 Hz bump through at unity gain. The springs still
+integrate every frame, so the output stays smooth; only the measurement waits.
+
+The still-frame percentage in the readout is that accumulator being zero. A high figure is normal and
+harmless above 60 fps — it is only a symptom if something has started differentiating against frame
+time again.
 
 **The vertical `gain` is 1.0 and should stay there.** The spring is
 
