@@ -101,6 +101,13 @@ VehicleSeat.debug = {
     peakDecay = 0.6,        -- per second
     frames = 0, stillFrames = 0, dt = 0,
     accX = 0, accY = 0, accZ = 0,
+    rawAccX = 0, rawAccY = 0, rawAccZ = 0,
+    -- Frame to frame change in the applied offset. This is the judder you can
+    -- actually see, and it is the number that separates a noisy input from a
+    -- broken integrator: small acceleration with a large jump here means the
+    -- fault is downstream of the measurement.
+    jumpX = 0, jumpY = 0, jumpZ = 0,
+    lastOffX = 0, lastOffY = 0, lastOffZ = 0,
     angPitch = 0, angRoll = 0, angYaw = 0,
     seatX = 0, seatY = 0, seatZ = 0,
     headPitch = 0, headRoll = 0, headYaw = 0,
@@ -387,6 +394,12 @@ function VehicleSeat.update(camera, dt)
             -- into their limits.
             state.warmup = state.warmup - 1
         else
+            if VehicleSeat.debug.enabled then
+                holdPeak("rawAccX", localAccX, sampleDt)
+                holdPeak("rawAccY", localAccY, sampleDt)
+                holdPeak("rawAccZ", localAccZ, sampleDt)
+            end
+
             -- One pole low pass, see ACCELERATION_FILTER_HZ
             local a = math.min(1, sampleDt * VehicleSeat.ACCELERATION_FILTER_HZ * math.pi * 2)
             state.filteredAccX = state.filteredAccX + (localAccX - state.filteredAccX) * a
@@ -432,6 +445,12 @@ function VehicleSeat.update(camera, dt)
     local angleYaw = state.headYaw * headScale
 
     if VehicleSeat.debug.enabled then
+        local d = VehicleSeat.debug
+        holdPeak("jumpX", offsetX - d.lastOffX, dts)
+        holdPeak("jumpY", offsetY - d.lastOffY, dts)
+        holdPeak("jumpZ", offsetZ - d.lastOffZ, dts)
+        d.lastOffX, d.lastOffY, d.lastOffZ = offsetX, offsetY, offsetZ
+
         holdPeak("accX", localAccX, dts)
         holdPeak("accY", localAccY, dts)
         holdPeak("accZ", localAccZ, dts)
@@ -529,7 +548,8 @@ function VehicleSeat.drawDebug()
     setTextBold(true)
     line("First Person Cameras - vehicle seat (peak held)")
     setTextBold(false)
-    line(string.format("cab accel   side %6.1f  up %6.1f  fore %6.1f  m/s2", d.accX, d.accY, d.accZ))
+    line(string.format("cab accel   side %6.1f  up %6.1f  fore %6.1f  m/s2  (filtered)", d.accX, d.accY, d.accZ))
+    line(string.format("            side %6.1f  up %6.1f  fore %6.1f  m/s2  (raw)", d.rawAccX, d.rawAccY, d.rawAccZ))
     line(string.format("cab angular pitch %6.1f  roll %6.1f  yaw %6.1f  rad/s2", d.angPitch, d.angRoll, d.angYaw))
     line(string.format("seat travel side %6.1f  up %6.1f  fore %6.1f  mm",
         d.seatX * 1000, d.seatY * 1000, d.seatZ * 1000))
@@ -538,6 +558,8 @@ function VehicleSeat.drawDebug()
     -- Frames on which the physics did not step. High is normal and harmless
     -- above 60 fps; it is only a problem if something starts differentiating
     -- against frame time again.
+    line(string.format("JUDDER      side %6.2f  up %6.2f  fore %6.2f  mm per frame",
+        d.jumpX * 1000, d.jumpY * 1000, d.jumpZ * 1000))
     line(string.format("frame %5.1f ms   frames with no physics step: %4.1f %%",
         d.dt * 1000, d.frames > 0 and (d.stillFrames / d.frames * 100) or 0))
 end
