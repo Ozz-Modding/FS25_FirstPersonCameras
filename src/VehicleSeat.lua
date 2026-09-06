@@ -64,12 +64,66 @@ VehicleSeat.SEAT = {
 -- amplifies noise.
 VehicleSeat.ACCELERATION_FILTER_HZ = 18
 
--- Head springs, driven by angular acceleration. Radians. Around 1.5 degrees of
--- lean per 5 rad/s^2, which is a firm but not violent bump.
+-- Head springs. Radians.
+--
+-- Two things tip your head, and they are not the same thing:
+--
+--   `gain`  is on the cab's ANGULAR acceleration - the machine twisting under
+--           you. This is the bump term. It is a transient by nature: the cab
+--           snaps one way and back, and your head lags through it.
+--   `gGain` is on the cab's LINEAR acceleration - the g-force pressing on your
+--           body. This is the term you feel in a corner or under braking, and
+--           unlike the bump term it is *sustained*: hold the corner and the lean
+--           holds with it.
+--
+-- The angular term alone was not enough, and measuring showed why rather than
+-- just that. At full lock in a tractor the readout showed 12.3 rad/s^2 of roll
+-- going in and 0.63 degrees of lean coming out. That is not the spring being
+-- too weak - 12 rad/s^2 is not a tractor rolling over, it is noise from
+-- differencing the attitude twice, and a 1.6 Hz spring is right to throw a spike
+-- that sharp away. There was no sustained component in the signal to find,
+-- because a steady corner has a constant yaw rate and therefore zero yaw
+-- acceleration. The lean has to come from the g-force instead.
+--
+-- This matters more than the seat travel does, because rotation is the only
+-- thing that moves the distant world across the windscreen. Sliding the seat
+-- 37 mm sideways swings the door pillar through several degrees and a barn a
+-- hundred metres away through a thirtieth of one, so translation on its own
+-- reads as the cab swimming around a driver who is nailed in place.
+--
+-- Pitch takes a much lower gGain than roll, and that asymmetry is measured, not
+-- taste. Fore/aft acceleration in this game is spiky where lateral is smooth:
+-- the brakes bite hard and briefly, so a stop from walking pace peaks over 1.2 g
+-- for a fraction of a second, while a steady corner holds a genuine ~5 m/s^2.
+-- With both gains near 1 that made a 6 mph stop nod the head 5.3 degrees - about
+-- what slamming a car to a halt from motorway speed should look like - while the
+-- same settings gave a well judged 2.4 degrees of roll at full lock. Equal gains
+-- on unequal inputs, so the gains have to be unequal.
+--
+-- Both gGains were landed by driving, not by calculation. The springs are linear,
+-- so the in-game sliders were used to find the multiplier that felt right and
+-- then folded back in: 0.375 at 50 percent gives 0.1875, 0.65 at 25 percent gives
+-- 0.1625. That leaves both sliders reading 100 percent at the tuned default,
+-- which is the point of them.
+--
+-- Note how much smaller these are than the first honest guess. The calculated
+-- values came from asking what a body actually does under 1 g, and they were
+-- roughly three times too much in the game. That is not the physics being wrong,
+-- it is that a real driver sees their own body move in their own peripheral
+-- vision and feels the force in their inner ear, and gets neither here. Anything
+-- above about a degree of pitch reads as the camera being yanked rather than as
+-- your own head moving. Trust the drive over the derivation on this one.
+--
+-- `limit` is shared with the bump term above, so it sits high enough to leave
+-- that some room and low enough that nothing ever looks broken. With gGain this
+-- low the g term no longer approaches it - the limit is now there for the bumps.
+--
+-- Yaw gets no g term: there is no sideways force that twists you about your own
+-- spine, only the machine snapping round under you, which is the angular term.
 VehicleSeat.HEAD = {
-    pitch = { freq = 1.45, zeta = 0.40, gain = 0.440, limit = 0.100 },  -- ~5.7 degrees
-    roll  = { freq = 1.60, zeta = 0.42, gain = 0.540, limit = 0.110 },
-    yaw   = { freq = 1.90, zeta = 0.55, gain = 0.290, limit = 0.060 },
+    pitch = { freq = 1.45, zeta = 0.40, gain = 0.440, gGain = 0.1875, limit = 0.090 },  -- ~5.2 degrees
+    roll  = { freq = 1.60, zeta = 0.42, gain = 0.540, gGain = 0.1625, limit = 0.100 },
+    yaw   = { freq = 1.90, zeta = 0.55, gain = 0.290, gGain = 0,      limit = 0.060 },
 }
 
 -- Engine vibration.
@@ -486,9 +540,29 @@ function VehicleSeat.update(camera, dt)
     local headScale = FPCSettings.get("vehicleHeadScale")
     local head = VehicleSeat.HEAD
 
-    state.headPitch, state.headPitchVel = integrate(head.pitch, state.headPitch, state.headPitchVel, -pitchAcc * head.pitch.gain, dts)
-    state.headRoll, state.headRollVel = integrate(head.roll, state.headRoll, state.headRollVel, -rollAcc * head.roll.gain, dts)
-    state.headYaw, state.headYawVel = integrate(head.yaw, state.headYaw, state.headYawVel, -yawAcc * head.yaw.gain, dts)
+    -- Note the two drive terms carry opposite signs, and that is not a slip.
+    --
+    -- The angular term is a lag: the cab pitches nose up, your head is late, so
+    -- it is still looking where the cab used to be - hence -pitchAcc.
+    --
+    -- The g term is the opposite. Your body is thrown *against* the acceleration,
+    -- so braking (acceleration backwards, localAccZ negative) throws you forward
+    -- and your head pitches down, which is a negative pitch under the convention
+    -- here (pitch is how far the nose is raised). Negative in, negative out, so
+    -- the term is +localAccZ. Same for roll: turning left accelerates you left,
+    -- localAccX goes negative, your body goes right and your head tips right,
+    -- which lowers the right side and so is a negative roll.
+    -- The g terms carry their own scales on top of headScale, because braking and
+    -- cornering are read off different measurements and want different gains.
+    local brakeScale = FPCSettings.get("vehicleBrakePitchScale")
+    local cornerScale = FPCSettings.get("vehicleCornerRollScale")
+
+    state.headPitch, state.headPitchVel = integrate(head.pitch, state.headPitch, state.headPitchVel,
+        -pitchAcc * head.pitch.gain + localAccZ * head.pitch.gGain * brakeScale, dts)
+    state.headRoll, state.headRollVel = integrate(head.roll, state.headRoll, state.headRollVel,
+        -rollAcc * head.roll.gain + localAccX * head.roll.gGain * cornerScale, dts)
+    state.headYaw, state.headYawVel = integrate(head.yaw, state.headYaw, state.headYawVel,
+        -yawAcc * head.yaw.gain, dts)
 
     local anglePitch = state.headPitch * headScale
     local angleRoll = state.headRoll * headScale

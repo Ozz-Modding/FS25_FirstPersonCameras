@@ -75,6 +75,24 @@ referenced (how far the nose is raised, how far the right side is raised) but ha
 through `setRotation` as Euler angles, and guessing the engine's handedness would silently turn the
 head *lag* into a head *lead*. Asking costs three lines and cannot be wrong.
 
+## Playing well with other camera mods
+
+The vehicle hook is installed from `FSBaseMission.onStartMission`, not at file scope, and that is
+deliberate. Indoor Camera Position (`FS25_indoorCamPosition`) replaces `VehicleCamera.update` with
+its own full copy of the function and never calls `superFunc`, so anything appended to `update`
+before it loads is silently dropped. Mods load alphabetically, `FirstPersonCameras` sorts before
+`indoorCamPosition`, so at file scope we lose every time. Don't move it back up.
+
+`onStartMission` specifically, rather than `Mission00.load`, for two reasons. It is the last thing to
+run before you get control, so it also beats mods that install their overwrite from `loadMap` or from
+their own load hook — file scope is not the only place mods patch from. And `FSBaseMission` is where
+`onStartMission` is really defined, so hooking it cannot shadow an inherited function; `Mission00.load`
+happens to be safe (Mission00 defines its own `load`) but only by luck. `Mission00:onStartMission`
+calls `Mission00:superClass().onStartMission(self)`, so a prepend on the base does fire.
+
+Realistic First Person and Cab Cinematic are fine: RFP prepends and appends to `VehicleCamera.update`
+without replacing it, and Cab Cinematic doesn't touch `update` at all.
+
 ## Keybinds
 
 `FPC_TOGGLE_WALK` (Right Ctrl + B) and `FPC_TOGGLE_VEHICLE` (Right Ctrl + N), both registered by
@@ -139,6 +157,45 @@ thing to look at when the numbers seem wrong. Those two must agree. If the measu
 even a few per cent, the sample interval is wrong and every acceleration derived from it is wrong by
 a far larger margin.
 
+**Head lean needs the g-force, not just the angular acceleration.** The head springs carry two
+drive terms. `gain` is on the cab's angular acceleration and is the bump term. `gGain` is on the
+cab's linear acceleration and is the cornering and braking term. Only the second one is sustained,
+and only the second one produced anything you could see.
+
+Measuring said so plainly: full lock in a tractor put 12.3 rad/s^2 of roll into the spring and got
+0.63 degrees of lean out. That is not a weak spring. 12 rad/s^2 is not a tractor rolling over, it is
+noise from differencing the attitude twice, and a 1.6 Hz spring is right to reject a spike that
+sharp. A steady corner holds a constant yaw rate, so its yaw *acceleration* is zero — there was no
+sustained component in that signal for any amount of gain to find.
+
+The two terms take opposite signs. Angular is a lag (`-pitchAcc`): the cab pitches and your head is
+late. Linear is a throw (`+localAccZ`): your body goes against the acceleration, so braking pitches
+your head down. Yaw gets no g term — nothing twists you about your own spine.
+
+Pitch runs a much lower `gGain` than roll because the two inputs are not alike. Fore/aft acceleration
+in this game is spiky and lateral is smooth: the brakes bite hard and briefly, so a stop from walking
+pace peaks over 1.2 g for a fraction of a second, where a steady corner holds a real ~5 m/s². With
+both gains near 1, a 6 mph stop nodded the head 5.3 degrees while the same settings gave a well
+judged 2.4 degrees of roll at full lock. Don't re-equalise them.
+
+The springs are linear, so read a gain straight off the readout rather than guessing at it: the
+lean is proportional to `gGain`, so one measured (acceleration, lean) pair and a target lean gives
+the number outright.
+
+But land the final number by driving, not by calculating. Both gGains ended up around a third of
+what the physics of a body under 1 g says they should be. That is not an error in the derivation —
+it is that a real driver sees their own body move in their peripheral vision and feels the force in
+their inner ear, and gets neither of those here, so the same angle reads as the camera being yanked
+rather than as their own head moving. About a degree of pitch under braking is the ceiling before it
+stops feeling like you.
+
+**Rotation is the only thing that moves the distant world.** Worth keeping in mind when a change
+looks like it did nothing. Sliding the seat 37 mm sideways swings the door pillar, half a metre from
+your eye, through about 6 degrees, and a barn a hundred metres off through 0.03 — invisible. So
+translation on its own always reads as the cab swimming around a driver who is nailed in place, no
+matter how large you make it. If the complaint is that the world does not move, the answer is in the
+head springs, never in the seat travel.
+
 **The vertical `gain` is 1.0 and should stay there.** The spring is
 
     x'' = -w^2 x - 2 zeta w x' - gain * a_cab
@@ -165,7 +222,10 @@ Every amplitude and spring parameter is a named constant at the top of `WalkCame
 `VehicleSeat.lua`. Spring frequencies are in Hz and damping is a ratio, so they read directly: the
 seat is 1.55 Hz and underdamped because a real air seat rebounds once rather than deadening the hit.
 The settings page scales each layer on top, with `Off` at one end, so a layer can be killed without
-touching code.
+touching code. Braking nod and cornering lean get a slider each rather than sharing the head one,
+because they are driven by different measurements and want different gains — see the `gGain` note
+above. Both multiply on top of the head scale, so tuning them in game and then folding the result
+back into `gGain` is the intended loop.
 
 ## Build
 

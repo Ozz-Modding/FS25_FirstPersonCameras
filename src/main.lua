@@ -119,9 +119,20 @@ PlayerCamera.updatePosition = Utils.appendedFunction(PlayerCamera.updatePosition
 
 -- Only the active camera of the vehicle you are in gets updated, so this fires
 -- once a frame at most (see Enterable:onPostUpdate).
-VehicleCamera.update = Utils.appendedFunction(VehicleCamera.update,
-    function(self, dt)
-        VehicleSeat.update(self, dt)
+--
+-- Installed from onStartMission rather than here at file scope. Several popular
+-- camera mods (Indoor Camera Position, for one) replace VehicleCamera.update
+-- with their own copy of the whole function and never call superFunc, which
+-- throws away everything hooked onto it before they loaded. onStartMission is
+-- the last thing to run before you get control, so appending there puts us on
+-- the end of whatever chain actually survived.
+FSBaseMission.onStartMission = Utils.prependedFunction(FSBaseMission.onStartMission,
+    function()
+        VehicleCamera.update = Utils.appendedFunction(VehicleCamera.update,
+            function(self, dt)
+                VehicleSeat.update(self, dt)
+            end
+        )
     end
 )
 

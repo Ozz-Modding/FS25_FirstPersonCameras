@@ -23,6 +23,8 @@ FPCSettings.menuItems = {
     "vehicleEnabled",
     "vehicleSeatScale",
     "vehicleHeadScale",
+    "vehicleBrakePitchScale",
+    "vehicleCornerRollScale",
     "vehicleEngineScale",
     "vehicleOutsideCameras",
 }
@@ -52,7 +54,13 @@ FPCSettings.SETTINGS = {
     -- In vehicle
     vehicleEnabled        = boolSetting(true),
     vehicleSeatScale      = scaleSetting(1.0),  -- seat travel (up/down, side, fore/aft)
-    vehicleHeadScale      = scaleSetting(1.0),  -- head pitch/roll/yaw lag
+    vehicleHeadScale      = scaleSetting(1.0),  -- head pitch/roll/yaw lag over bumps
+    -- These two scale only the g-force half of the head lean, on top of
+    -- vehicleHeadScale. Split out because braking and cornering are driven by
+    -- separate measurements that need very different gains (see VehicleSeat.HEAD),
+    -- so one slider could never sit right for both.
+    vehicleBrakePitchScale = scaleSetting(1.0), -- nod under braking and acceleration
+    vehicleCornerRollScale = scaleSetting(1.0), -- lean into a corner
     vehicleEngineScale    = scaleSetting(1.0),  -- engine vibration through the seat
     vehicleOutsideCameras = boolSetting(false), -- also apply to the outdoor cameras
 }

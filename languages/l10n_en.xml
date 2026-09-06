@@ -36,6 +36,12 @@
 		<text name="fpc_setting_vehicleHeadScale" text="Head lag"/>
 		<text name="fpc_setting_vehicleHeadScale_tooltip" text="How much your head lags behind when the machine pitches and rolls, and leans in a corner."/>
 
+		<text name="fpc_setting_vehicleBrakePitchScale" text="Braking nod"/>
+		<text name="fpc_setting_vehicleBrakePitchScale_tooltip" text="How far you are thrown forward and pitch your head down under braking, and back under acceleration."/>
+
+		<text name="fpc_setting_vehicleCornerRollScale" text="Cornering lean"/>
+		<text name="fpc_setting_vehicleCornerRollScale_tooltip" text="How far your head tips to the outside of a turn. Holds for as long as the corner does."/>
+
 		<text name="fpc_setting_vehicleEngineScale" text="Engine vibration"/>
 		<text name="fpc_setting_vehicleEngineScale_tooltip" text="Vibration coming up through the seat. Rate follows engine revs, depth follows load."/>
 
