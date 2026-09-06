@@ -103,26 +103,41 @@ second. The stride constants are stretched to keep cadence around two steps a se
 cab acceleration, cab angular acceleration, the resulting seat travel and head lean, and the share of
 frames on which the cab did not move at all. Use it before changing a gain.
 
-**Never differentiate the cab's transform against frame time.** Vehicle transforms are written by
-the physics step, so render frames in between see the cab exactly where they saw it last.
-Differentiating that every frame samples a staircase, and the fiction that falls out is enormous —
-on flat ground at 30 km/h it reads over 1000 m/s² of fore/aft acceleration where the truth is zero,
-which is more than enough to slam the fore/aft spring into its travel limit and back. Fore/aft is
-always the worst axis because it is the one carrying the vehicle's actual travel.
+**Every measured quantity carries its own clock.** This is the single biggest source of wrong
+numbers in this file, and it has bitten twice.
 
-Two things make this easy to get wrong. It scales with frame rate, and it **disappears entirely when
-the render rate equals the physics rate** — so testing at a locked 60 fps says the code is fine when
-it is not.
+The quantities we sample do not all change at the same rate. The cab's transform is interpolated up
+to the render rate, so it moves a little every frame. The physics engine's velocity is not — it is
+piecewise constant and changes only when the physics steps. Divide either by the other's interval and
+the answer is wrong by the ratio between them.
 
-The fix in `update()` is to accumulate `g_physicsDtNonInterpolated`, which is how far the physics
-actually advanced this frame and is zero on frames where it did not step, and to take a measurement
-only when that accumulator is non-zero, dividing by it. That gives zero fiction at every frame rate
-tested (30 through 240) and passes a real 1.5 Hz bump through at unity gain. The springs still
-integrate every frame, so the output stays smooth; only the measurement waits.
+What that looks like in the game: in the cab of a tractor on flat tarmac at 25 mph the readout showed
+81.5 m/s² fore/aft, 14.0 sideways and 4.7 vertically, where the truth on all three is near zero. The
+tell is that the errors are ordered exactly by how far the cab travels on each axis — a bad interval
+scales every axis by the same fraction of its own motion, where noise would not. Fore/aft is always
+worst because it carries the road speed, and 8g of imaginary braking is what made the view lurch.
 
-The still-frame percentage in the readout is that accumulator being zero. A high figure is normal and
-harmless above 60 fps — it is only a symptom if something has started differentiating against frame
-time again.
+So each measured value gets its own accumulator, holding the wall time since *that* value last
+changed: `sincePos`, `sinceVel`, `sinceAtt`. Then it does not matter which quantity is interpolated
+or at what rate either loop runs.
+
+Two dead ends, recorded so they are not tried again. Differentiating everything against the render
+frame time is wrong whenever a quantity is not interpolated. Differentiating everything against
+`g_physicsDtNonInterpolated` is wrong the other way, for the quantities that *are* interpolated —
+that was the second attempt and it made the fore/aft axis worse. Neither one clock nor the other
+works, because the premise that one clock fits everything is what is wrong.
+
+**Prefer `getLinearVelocity` over differencing a position.** Every differentiation multiplies noise
+by the sample rate, and the velocity from the physics body is exact and free. It also sidesteps the
+clock question for the linear axes entirely, because a value that changes only at physics steps is
+trivially easy to time correctly — you just wait for it to change. `getBodyNode` finds the body via
+`Vehicle:getParentComponent`; when there is none, the code falls back to differencing position on its
+own clock.
+
+The `speed measured / vehicle says` line in the readout is the timing check, and it is the first
+thing to look at when the numbers seem wrong. Those two must agree. If the measured speed is out by
+even a few per cent, the sample interval is wrong and every acceleration derived from it is wrong by
+a far larger margin.
 
 **The vertical `gain` is 1.0 and should stay there.** The spring is
 

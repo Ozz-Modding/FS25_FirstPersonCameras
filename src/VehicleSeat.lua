@@ -100,6 +100,7 @@ VehicleSeat.debug = {
     enabled = false,
     peakDecay = 0.6,        -- per second
     frames = 0, stillFrames = 0, dt = 0,
+    measuredSpeed = 0, reportedSpeed = 0,
     accX = 0, accY = 0, accZ = 0,
     rawAccX = 0, rawAccY = 0, rawAccZ = 0,
     -- Frame to frame change in the applied offset. This is the judder you can
@@ -175,7 +176,7 @@ local function newState()
         lastVelX = 0, lastVelY = 0, lastVelZ = 0,
         lastPitch = 0, lastRoll = 0, lastYaw = 0,
         lastPitchRate = 0, lastRollRate = 0, lastYawRate = 0,
-        sampleDt = 0,
+        sincePos = 0, sinceVel = 0, sinceAtt = 0,
         filteredAccX = 0, filteredAccY = 0, filteredAccZ = 0,
         filteredPitchAcc = 0, filteredRollAcc = 0, filteredYawAcc = 0,
         seatX = 0, seatY = 0, seatZ = 0,
@@ -191,7 +192,7 @@ end
 -- rings down naturally instead of snapping to centre.
 function VehicleSeat.resetMeasurement(state)
     state.warmup = VehicleSeat.WARMUP_FRAMES
-    state.sampleDt = 0
+    state.sincePos, state.sinceVel, state.sinceAtt = 0, 0, 0
     state.lastVelX, state.lastVelY, state.lastVelZ = 0, 0, 0
     state.lastPitchRate, state.lastRollRate, state.lastYawRate = 0, 0, 0
     state.filteredAccX, state.filteredAccY, state.filteredAccZ = 0, 0, 0
@@ -250,6 +251,23 @@ local function getMountNode(camera)
     return nil
 end
 
+---The physics body the camera hangs off, which is what getLinearVelocity needs.
+-- Vehicle:getParentComponent walks up until it finds a node the vehicle claims
+-- as one of its components, and returns 0 when there is none.
+local function getBodyNode(camera)
+    local vehicle = camera.vehicle
+    if vehicle == nil or vehicle.getParentComponent == nil or getLinearVelocity == nil then
+        return nil
+    end
+
+    local node = vehicle:getParentComponent(camera.cameraPositionNode or camera.cameraNode)
+    if node == nil or node == 0 or not entityExists(node) then
+        return nil
+    end
+
+    return node
+end
+
 function VehicleSeat.shouldApply(camera)
     if not FPCSettings.get("vehicleEnabled") then
         return false
@@ -272,12 +290,19 @@ end
 function VehicleSeat.update(camera, dt)
     if not VehicleSeat.shouldApply(camera) then
         camera.fpcSeat = nil
+        camera.fpcBodyNode = nil
         return
     end
 
     local mountNode = getMountNode(camera)
     if mountNode == nil then
         return
+    end
+
+    if camera.fpcBodyNode == nil then
+        -- false rather than nil, so a vehicle with no physics body is resolved
+        -- once and not looked up again every frame
+        camera.fpcBodyNode = getBodyNode(camera) or false
     end
 
     local dts = math.clamp(dt * 0.001, 0, VehicleSeat.MAX_DT)
@@ -307,86 +332,88 @@ function VehicleSeat.update(camera, dt)
         state.warmup = state.warmup - 1
         state.lastPosX, state.lastPosY, state.lastPosZ = posX, posY, posZ
         state.lastPitch, state.lastRoll, state.lastYaw = pitch, roll, yaw
+        state.sincePos, state.sinceVel, state.sinceAtt = 0, 0, 0
         return
     end
 
-    -- Differentiate against physics time, never against frame time.
+    -- Getting the time interval right is the whole game here.
     --
-    -- Vehicle transforms are written by the physics step. Render frames in
-    -- between see the cab exactly where they saw it last, so differentiating
-    -- every frame samples a staircase: velocity alternates between zero and a
-    -- double step, and acceleration between plus and minus something enormous.
+    -- Measured in the cab of a tractor on flat tarmac at 25 mph, this reported
+    -- 81.5 m/s^2 fore/aft, 14.0 sideways and 4.7 vertically, where the truth on
+    -- all three is close to zero. Those are ordered exactly by how far the cab
+    -- travels on each axis, which is the signature of a wrong sample interval
+    -- rather than of noise: a bad dt scales every axis by the same fraction of
+    -- its own motion. Fore/aft is worst because it carries the road speed, and
+    -- 8g of imaginary braking is what the lurching was.
     --
-    -- It is worst by far on the fore/aft axis, because that is the axis carrying
-    -- the vehicle's actual travel. At 30 km/h the cab steps 138 mm per physics
-    -- tick, and the fiction that falls out of differentiating that staircase
-    -- reads over a thousand m/s^2 while the true value is zero - easily enough
-    -- to slam the fore/aft spring into its travel limit and back. That was the
-    -- sharp lurching on smooth ground.
+    -- The trap is that the quantities we sample do not all change at the same
+    -- rate. The cab's transform is interpolated up to the render rate, so it
+    -- moves a little every frame. The physics engine's velocity is not - it is
+    -- piecewise constant and only changes when the physics steps. Divide either
+    -- one by the other's interval and the answer is wrong by the ratio between
+    -- them, which is exactly what happened.
     --
-    -- It also scales with frame rate, and vanishes when the render rate happens
-    -- to equal the physics rate, which is a good way to convince yourself the
-    -- code is fine when it is not.
-    --
-    -- g_physicsDtNonInterpolated is how much the physics actually advanced this
-    -- frame, and it is zero on frames where it did not step at all. Accumulate
-    -- that, and take a measurement only when it is non-zero. The springs still
-    -- integrate every frame so the output stays smooth; only the measurement
-    -- waits for something new to measure.
-    local physicsStep = g_physicsDtNonInterpolated
-    if physicsStep == nil then
-        physicsStep = dt        -- no physics clock available, fall back to frame time
+    -- So each measured quantity carries its own clock: the accumulated wall time
+    -- since *that* value last changed, and nothing else. Then it does not matter
+    -- which of them is interpolated, or at what rate the game runs either loop.
+    state.sincePos = state.sincePos + dts
+    state.sinceVel = state.sinceVel + dts
+    state.sinceAtt = state.sinceAtt + dts
+
+    -- VELOCITY. Straight from the physics engine where there is a body to ask:
+    -- that removes a derivative, and a derivative is where the noise comes from.
+    local velX, velY, velZ
+    if camera.fpcBodyNode then
+        velX, velY, velZ = getLinearVelocity(camera.fpcBodyNode)
     end
-    state.sampleDt = state.sampleDt + physicsStep * 0.001
 
-    local hasNewSample = state.sampleDt > 0
-
-    if VehicleSeat.debug.enabled then
-        VehicleSeat.debug.frames = VehicleSeat.debug.frames + 1
-        if not hasNewSample then
-            VehicleSeat.debug.stillFrames = VehicleSeat.debug.stillFrames + 1
+    if velX == nil then
+        -- No physics body, so difference the position instead - on its own clock.
+        if posX ~= state.lastPosX or posY ~= state.lastPosY or posZ ~= state.lastPosZ then
+            local sdt = math.max(state.sincePos, 0.0005)
+            velX = (posX - state.lastPosX) / sdt
+            velY = (posY - state.lastPosY) / sdt
+            velZ = (posZ - state.lastPosZ) / sdt
+        else
+            velX, velY, velZ = state.lastVelX, state.lastVelY, state.lastVelZ
         end
-        VehicleSeat.debug.dt = dts
     end
 
-    if hasNewSample then
-        local sampleDt = state.sampleDt
-        state.sampleDt = 0
-
+    -- Teleport, vehicle reset, a long stall: anything faster than any vehicle in
+    -- the game can plausibly travel is not real movement. Judged against the time
+    -- actually elapsed, or a long frame at speed reads as a jump.
+    if posX ~= state.lastPosX or posY ~= state.lastPosY or posZ ~= state.lastPosZ then
         local dx, dy, dz = posX - state.lastPosX, posY - state.lastPosY, posZ - state.lastPosZ
-
-        -- Teleport, vehicle reset, a long stall: anything faster than any vehicle
-        -- in the game can plausibly travel is not real movement. Judge it against
-        -- the time actually elapsed, or a long frame at speed reads as a jump.
         local distance = math.sqrt(dx * dx + dy * dy + dz * dz)
-        if distance > VehicleSeat.TELEPORT_SPEED * sampleDt + VehicleSeat.TELEPORT_MARGIN then
+        if distance > VehicleSeat.TELEPORT_SPEED * state.sincePos + VehicleSeat.TELEPORT_MARGIN then
             -- Drop the measurement history but leave the springs alone, so they
             -- ring down naturally instead of snapping to centre.
             VehicleSeat.resetMeasurement(state)
             return
         end
-
-        local velX, velY, velZ = dx / sampleDt, dy / sampleDt, dz / sampleDt
-        local maxAcc = VehicleSeat.MAX_ACCELERATION
-        local accX = math.clamp((velX - state.lastVelX) / sampleDt, -maxAcc, maxAcc)
-        local accY = math.clamp((velY - state.lastVelY) / sampleDt, -maxAcc, maxAcc)
-        local accZ = math.clamp((velZ - state.lastVelZ) / sampleDt, -maxAcc, maxAcc)
-
-        -- Into the cab's own frame: x is sideways, y is up, z is fore/aft
-        local localAccX, localAccY, localAccZ = worldDirectionToLocal(mountNode, accX, accY, accZ)
-
-        local maxAngAcc = VehicleSeat.MAX_ANGULAR_ACCELERATION
-        local pitchRate = wrapAngle(pitch - state.lastPitch) / sampleDt
-        local rollRate = wrapAngle(roll - state.lastRoll) / sampleDt
-        local yawRate = wrapAngle(yaw - state.lastYaw) / sampleDt
-        local pitchAcc = math.clamp((pitchRate - state.lastPitchRate) / sampleDt, -maxAngAcc, maxAngAcc)
-        local rollAcc = math.clamp((rollRate - state.lastRollRate) / sampleDt, -maxAngAcc, maxAngAcc)
-        local yawAcc = math.clamp((yawRate - state.lastYawRate) / sampleDt, -maxAngAcc, maxAngAcc)
-
         state.lastPosX, state.lastPosY, state.lastPosZ = posX, posY, posZ
+        state.sincePos = 0
+    end
+
+    if VehicleSeat.debug.enabled then
+        VehicleSeat.debug.frames = VehicleSeat.debug.frames + 1
+        VehicleSeat.debug.dt = dts
+        VehicleSeat.debug.measuredSpeed = math.sqrt(velX * velX + velY * velY + velZ * velZ)
+        VehicleSeat.debug.reportedSpeed = camera.vehicle ~= nil
+            and (camera.vehicle.lastSpeedReal or 0) * 1000 or 0
+    end
+
+    -- LINEAR ACCELERATION, on the velocity's clock
+    if velX ~= state.lastVelX or velY ~= state.lastVelY or velZ ~= state.lastVelZ then
+        local sdt = math.max(state.sinceVel, 0.0005)
+        state.sinceVel = 0
+
+        local maxAcc = VehicleSeat.MAX_ACCELERATION
+        local accX = math.clamp((velX - state.lastVelX) / sdt, -maxAcc, maxAcc)
+        local accY = math.clamp((velY - state.lastVelY) / sdt, -maxAcc, maxAcc)
+        local accZ = math.clamp((velZ - state.lastVelZ) / sdt, -maxAcc, maxAcc)
+
         state.lastVelX, state.lastVelY, state.lastVelZ = velX, velY, velZ
-        state.lastPitch, state.lastRoll, state.lastYaw = pitch, roll, yaw
-        state.lastPitchRate, state.lastRollRate, state.lastYawRate = pitchRate, rollRate, yawRate
 
         if state.warmup > 0 then
             -- Entering a moving vehicle would otherwise read the whole of its
@@ -394,17 +421,40 @@ function VehicleSeat.update(camera, dt)
             -- into their limits.
             state.warmup = state.warmup - 1
         else
+            -- Into the cab's own frame: x sideways, y up, z fore/aft
+            local ax, ay, az = worldDirectionToLocal(mountNode, accX, accY, accZ)
+
             if VehicleSeat.debug.enabled then
-                holdPeak("rawAccX", localAccX, sampleDt)
-                holdPeak("rawAccY", localAccY, sampleDt)
-                holdPeak("rawAccZ", localAccZ, sampleDt)
+                holdPeak("rawAccX", ax, sdt)
+                holdPeak("rawAccY", ay, sdt)
+                holdPeak("rawAccZ", az, sdt)
             end
 
-            -- One pole low pass, see ACCELERATION_FILTER_HZ
-            local a = math.min(1, sampleDt * VehicleSeat.ACCELERATION_FILTER_HZ * math.pi * 2)
-            state.filteredAccX = state.filteredAccX + (localAccX - state.filteredAccX) * a
-            state.filteredAccY = state.filteredAccY + (localAccY - state.filteredAccY) * a
-            state.filteredAccZ = state.filteredAccZ + (localAccZ - state.filteredAccZ) * a
+            local a = math.min(1, sdt * VehicleSeat.ACCELERATION_FILTER_HZ * math.pi * 2)
+            state.filteredAccX = state.filteredAccX + (ax - state.filteredAccX) * a
+            state.filteredAccY = state.filteredAccY + (ay - state.filteredAccY) * a
+            state.filteredAccZ = state.filteredAccZ + (az - state.filteredAccZ) * a
+        end
+    end
+
+    -- ANGULAR ACCELERATION, on the attitude's clock
+    if pitch ~= state.lastPitch or roll ~= state.lastRoll or yaw ~= state.lastYaw then
+        local sdt = math.max(state.sinceAtt, 0.0005)
+        state.sinceAtt = 0
+
+        local maxAngAcc = VehicleSeat.MAX_ANGULAR_ACCELERATION
+        local pitchRate = wrapAngle(pitch - state.lastPitch) / sdt
+        local rollRate = wrapAngle(roll - state.lastRoll) / sdt
+        local yawRate = wrapAngle(yaw - state.lastYaw) / sdt
+        local pitchAcc = math.clamp((pitchRate - state.lastPitchRate) / sdt, -maxAngAcc, maxAngAcc)
+        local rollAcc = math.clamp((rollRate - state.lastRollRate) / sdt, -maxAngAcc, maxAngAcc)
+        local yawAcc = math.clamp((yawRate - state.lastYawRate) / sdt, -maxAngAcc, maxAngAcc)
+
+        state.lastPitch, state.lastRoll, state.lastYaw = pitch, roll, yaw
+        state.lastPitchRate, state.lastRollRate, state.lastYawRate = pitchRate, rollRate, yawRate
+
+        if state.warmup <= 0 then
+            local a = math.min(1, sdt * VehicleSeat.ACCELERATION_FILTER_HZ * math.pi * 2)
             state.filteredPitchAcc = state.filteredPitchAcc + (pitchAcc - state.filteredPitchAcc) * a
             state.filteredRollAcc = state.filteredRollAcc + (rollAcc - state.filteredRollAcc) * a
             state.filteredYawAcc = state.filteredYawAcc + (yawAcc - state.filteredYawAcc) * a
@@ -560,8 +610,12 @@ function VehicleSeat.drawDebug()
     -- against frame time again.
     line(string.format("JUDDER      side %6.2f  up %6.2f  fore %6.2f  mm per frame",
         d.jumpX * 1000, d.jumpY * 1000, d.jumpZ * 1000))
-    line(string.format("frame %5.1f ms   frames with no physics step: %4.1f %%",
-        d.dt * 1000, d.frames > 0 and (d.stillFrames / d.frames * 100) or 0))
+    -- The timing check. These two must agree; if the measured speed is out by
+    -- even a few per cent then the sample interval is wrong, and every
+    -- acceleration above it is wrong by a far larger margin.
+    line(string.format("speed  measured %6.2f   vehicle says %6.2f  m/s   <- must match",
+        d.measuredSpeed, d.reportedSpeed))
+    line(string.format("frame %5.1f ms", d.dt * 1000))
 end
 
 function VehicleSeat.consoleCommandDebug()
