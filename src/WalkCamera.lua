@@ -38,10 +38,14 @@ WalkCamera.WALK_SPEED = 4                  -- PlayerStateWalk.MAXIMUM_WALK_SPEED
 
 -- Weighted towards side to side rather than up and down: walking rolls you from
 -- one leg to the other far more than it lifts you.
-WalkCamera.BOB_VERTICAL = 0.020            -- metres, peak, at full run
-WalkCamera.BOB_LATERAL = 0.052
-WalkCamera.BOB_ROLL = 0.0165               -- radians, ~0.95 degrees
-WalkCamera.BOB_PITCH = 0.0040
+--
+-- These are half what they first were. The original set read as too much at the
+-- 100% setting and right at 50%, so the halved values are now what 100% gives -
+-- the settings ladder is better spent on room above the default than below it.
+WalkCamera.BOB_VERTICAL = 0.010            -- metres, peak, at full run
+WalkCamera.BOB_LATERAL = 0.026
+WalkCamera.BOB_ROLL = 0.00825              -- radians, ~0.47 degrees
+WalkCamera.BOB_PITCH = 0.0020
 
 -- Low pass on the gait layers. Frame time and the player's own speed both jitter
 -- a little, and that jitter lands straight on the bob as a shimmer; a short
