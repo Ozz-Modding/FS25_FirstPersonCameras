@@ -55,10 +55,8 @@ FPCSettings.SETTINGS = {
     vehicleEnabled        = boolSetting(true),
     vehicleSeatScale      = scaleSetting(1.0),  -- seat travel (up/down, side, fore/aft)
     vehicleHeadScale      = scaleSetting(1.0),  -- head pitch/roll/yaw lag over bumps
-    -- These two scale only the g-force half of the head lean, on top of
-    -- vehicleHeadScale. Split out because braking and cornering are driven by
-    -- separate measurements that need very different gains (see VehicleSeat.HEAD),
-    -- so one slider could never sit right for both.
+    -- g-force half of head lean only, on top of vehicleHeadScale. Split out
+    -- because braking/cornering need very different gains (see VehicleSeat.HEAD).
     vehicleBrakePitchScale = scaleSetting(1.0), -- nod under braking and acceleration
     vehicleCornerRollScale = scaleSetting(1.0), -- lean into a corner
     vehicleEngineScale    = scaleSetting(1.0),  -- engine vibration through the seat
@@ -101,8 +99,7 @@ function FPCSettings.getStateIndex(id, value)
     end
 
     if type(value) == "number" then
-        -- Snap to the closest listed value; a hand edited settings file can hold
-        -- something that is not on the list.
+        -- Snap to the closest listed value; a hand edited file can hold anything.
         local bestIndex, bestDiff = 1, math.huge
         for i, v in ipairs(setting.values) do
             local diff = math.abs(v - value)
@@ -211,8 +208,8 @@ function FPCSettings.addSettingsToMenu()
     end
 
     local settingsPage = inGameMenu.pageSettings
-    -- The focus manager ignores controls whose callback target has no name, and it
-    -- has to match the page, so borrow the page's name.
+    -- Focus manager ignores controls whose callback target has no name and
+    -- requires it to match the page, so borrow the page's name.
     FPCSettingsControls.name = settingsPage.name
 
     local function addMultiOption(id)

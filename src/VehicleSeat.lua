@@ -3,123 +3,87 @@
 --
 -- Seat and body suspension for vehicle cameras.
 --
--- In the base game the camera is bolted to the cab: the view moves exactly with
--- the vehicle, so a tractor crossing a rut just teleports the horizon. A real
--- seat is sprung, and the driver on it is a mass on top of that spring. This
--- reproduces both:
+-- The base game bolts the camera straight to the cab. A real seat is sprung and
+-- the driver sits as a mass on top of it, so:
 --
---   * SEAT   - three damped springs (up/down, side to side, fore/aft) driven by
---              the acceleration of the point the camera hangs off. Hit a bump
---              and the cab jumps up while the seat stays behind, then catches
---              up and overshoots slightly.
---   * HEAD   - three more springs driven by the angular acceleration of the
---              cab, so your head lags when the machine pitches and rolls, and
---              leans in a corner or under braking.
---   * ENGINE - a small vibration whose rate follows engine rpm and whose depth
---              follows load.
+--   * SEAT   - three damped springs (up/down, side, fore/aft) driven by the
+--              mount's acceleration. A bump throws the cab up, the seat lags,
+--              then catches up and slightly overshoots.
+--   * HEAD   - three more springs driven by angular acceleration: head lags
+--              pitch/roll and leans under cornering/braking.
+--   * ENGINE - vibration whose rate follows rpm, depth follows load.
 --
--- All of it is measured, not scripted: we finite-difference the mount node's
--- world transform. That means it works on every vehicle, including ones with no
--- suspension data of their own, and it picks up whatever wheel suspension,
--- articulation or cab damping the vehicle already has.
+-- All measured, not scripted, by finite-differencing the mount's world
+-- transform - so it works on every vehicle and picks up whatever suspension,
+-- articulation or cab damping already exists. Same technique as the base
+-- game's Suspensions spec (vehicles/specializations/Suspensions.lua), which
+-- few vehicles define and which is off by default.
 --
--- This is the same technique the base game's Suspensions specialization uses for
--- cab suspension nodes (see vehicles/specializations/Suspensions.lua), which
--- only a handful of vehicles define and which is off by default.
---
--- The result is applied after VehicleCamera:update has posed the camera, by
--- rebuilding the camera's world transform through a small node chain. The game
--- re-poses the camera from scratch every frame, so nothing accumulates.
+-- Applied after VehicleCamera:update poses the camera, by rebuilding its world
+-- transform through a small node chain. The game re-poses from scratch every
+-- frame, so nothing accumulates.
 ---
 
 VehicleSeat = {}
 
--- Seat springs. Frequency in Hz, zeta is the damping ratio, gain is how much of
--- the cab's acceleration the seat actually gives way to.
---
--- `gain` is the coefficient on the cab's acceleration in
+-- Seat springs. Frequency in Hz, zeta is damping ratio, gain is how much of the
+-- cab's acceleration the seat gives way to:
 --
 --     x'' = -w^2 x - 2 zeta w x' - gain * a_cab
 --
--- where x is the seat's position relative to the cab. For a mass on a spring
--- whose base is being shaken - which is exactly what a seat is - the textbook
--- coefficient is **1.0**. Anything less is a fudge that quietly makes the seat
--- stiffer than its stated frequency, and it was the reason the vertical axis
--- looked welded to the wheel: at 0.33 a firm bump moved the view 17 mm.
---
--- So vertical runs at the honest 1.0 and is held in check by `limit` instead.
--- Lateral and fore/aft keep a reduced gain on purpose: a seat barely slides in
--- those directions, what moves is your body, and you are braced against it.
+-- For a mass on a shaken base, the textbook gain is 1.0; less is a fudge that
+-- makes the seat stiffer than its stated frequency (at 0.33 vertical looked
+-- welded to the wheel: a firm bump moved the view 17 mm). So vertical runs at
+-- 1.0 and is kept in check by `limit` instead. Lateral/fore-aft keep reduced
+-- gain deliberately: a seat barely slides those ways, your braced body does.
 VehicleSeat.SEAT = {
-    -- 1.3 Hz and underdamped, which is where a real tractor air seat sits: it
-    -- rebounds once rather than deadening the hit
+    -- 1.3 Hz underdamped, like a real air seat: rebounds once rather than
+    -- deadening the hit
     vertical   = { freq = 1.30, zeta = 0.32, gain = 1.00, limit = 0.10 },
     lateral    = { freq = 2.00, zeta = 0.50, gain = 0.50, limit = 0.06 },
     longitudinal = { freq = 1.90, zeta = 0.48, gain = 0.50, limit = 0.06 },
 }
 
--- Smoothing on the measured acceleration. The physics/render rate mismatch is
--- handled properly in update() by measuring against physics time; this is just
--- to take the edge off what is left, since differencing a position twice always
--- amplifies noise.
+-- Smoothing on measured acceleration, on top of the physics-time measurement in
+-- update() - differencing a position twice always leaves some noise.
 VehicleSeat.ACCELERATION_FILTER_HZ = 18
 
 -- Head springs. Radians.
 --
--- Two things tip your head, and they are not the same thing:
+-- `gain`  - cab's ANGULAR acceleration (twisting). Transient bump term: cab
+--           snaps and back, head lags through it.
+-- `gGain` - cab's LINEAR acceleration (g-force). Sustained cornering/braking
+--           term: hold the corner, the lean holds.
 --
---   `gain`  is on the cab's ANGULAR acceleration - the machine twisting under
---           you. This is the bump term. It is a transient by nature: the cab
---           snaps one way and back, and your head lags through it.
---   `gGain` is on the cab's LINEAR acceleration - the g-force pressing on your
---           body. This is the term you feel in a corner or under braking, and
---           unlike the bump term it is *sustained*: hold the corner and the lean
---           holds with it.
+-- Angular alone isn't enough: full lock in a tractor fed 12.3 rad/s^2 of roll
+-- for only 0.63 degrees of lean - not a weak spring, that's differencing noise
+-- a 1.6 Hz spring is right to reject. A steady corner has constant yaw rate, so
+-- zero yaw acceleration - no sustained signal there for gain to find. The lean
+-- has to come from g-force instead.
 --
--- The angular term alone was not enough, and measuring showed why rather than
--- just that. At full lock in a tractor the readout showed 12.3 rad/s^2 of roll
--- going in and 0.63 degrees of lean coming out. That is not the spring being
--- too weak - 12 rad/s^2 is not a tractor rolling over, it is noise from
--- differencing the attitude twice, and a 1.6 Hz spring is right to throw a spike
--- that sharp away. There was no sustained component in the signal to find,
--- because a steady corner has a constant yaw rate and therefore zero yaw
--- acceleration. The lean has to come from the g-force instead.
+-- This matters more than seat travel: rotation is the only thing that moves
+-- the distant world. Sliding the seat 37 mm sideways swings a door pillar
+-- several degrees but a barn 100 m off a thirtieth of one - translation alone
+-- reads as the cab swimming around a driver nailed in place.
 --
--- This matters more than the seat travel does, because rotation is the only
--- thing that moves the distant world across the windscreen. Sliding the seat
--- 37 mm sideways swings the door pillar through several degrees and a barn a
--- hundred metres away through a thirtieth of one, so translation on its own
--- reads as the cab swimming around a driver who is nailed in place.
+-- Pitch runs a much lower gGain than roll, measured not chosen: fore/aft is
+-- spiky (a stop peaks >1.2 g briefly), lateral is smooth (~5 m/s^2 sustained).
+-- Equal gains near 1 gave a 6 mph stop 5.3 degrees of nod against a well
+-- judged 2.4 degrees of roll at full lock - equal gains on unequal inputs.
 --
--- Pitch takes a much lower gGain than roll, and that asymmetry is measured, not
--- taste. Fore/aft acceleration in this game is spiky where lateral is smooth:
--- the brakes bite hard and briefly, so a stop from walking pace peaks over 1.2 g
--- for a fraction of a second, while a steady corner holds a genuine ~5 m/s^2.
--- With both gains near 1 that made a 6 mph stop nod the head 5.3 degrees - about
--- what slamming a car to a halt from motorway speed should look like - while the
--- same settings gave a well judged 2.4 degrees of roll at full lock. Equal gains
--- on unequal inputs, so the gains have to be unequal.
+-- Both gGains were landed by driving: in-game sliders found the feel, then
+-- folded back (0.375 at 50% = 0.1875, 0.65 at 25% = 0.1625), leaving both
+-- sliders reading 100% at the tuned default.
 --
--- Both gGains were landed by driving, not by calculation. The springs are linear,
--- so the in-game sliders were used to find the multiplier that felt right and
--- then folded back in: 0.375 at 50 percent gives 0.1875, 0.65 at 25 percent gives
--- 0.1625. That leaves both sliders reading 100 percent at the tuned default,
--- which is the point of them.
+-- Both are far below the calculated 1g value - about a third of it. Not wrong
+-- physics: a real driver sees their body move and feels it in their inner ear,
+-- and gets neither here, so the same angle reads as being yanked rather than
+-- as their own head moving. ~1 degree of pitch under braking is the ceiling.
 --
--- Note how much smaller these are than the first honest guess. The calculated
--- values came from asking what a body actually does under 1 g, and they were
--- roughly three times too much in the game. That is not the physics being wrong,
--- it is that a real driver sees their own body move in their own peripheral
--- vision and feels the force in their inner ear, and gets neither here. Anything
--- above about a degree of pitch reads as the camera being yanked rather than as
--- your own head moving. Trust the drive over the derivation on this one.
+-- `limit` is shared with the bump term; with gGain this low the g term no
+-- longer approaches it, so the limit now exists for bumps only.
 --
--- `limit` is shared with the bump term above, so it sits high enough to leave
--- that some room and low enough that nothing ever looks broken. With gGain this
--- low the g term no longer approaches it - the limit is now there for the bumps.
---
--- Yaw gets no g term: there is no sideways force that twists you about your own
--- spine, only the machine snapping round under you, which is the angular term.
+-- Yaw gets no g term - nothing sideways twists you about your own spine.
 VehicleSeat.HEAD = {
     pitch = { freq = 1.45, zeta = 0.40, gain = 0.440, gGain = 0.1875, limit = 0.090 },  -- ~5.2 degrees
     roll  = { freq = 1.60, zeta = 0.42, gain = 0.540, gGain = 0.1625, limit = 0.100 },
@@ -128,11 +92,10 @@ VehicleSeat.HEAD = {
 
 -- Engine vibration.
 --
--- Keep these low. Anything approaching half the frame rate aliases: the samples
--- walk around the waveform instead of tracing it, and what should be a fine
--- shimmer comes out as a violent random shake that no amount of turning the
--- amplitude down will fix. The second component is a sub-harmonic rather than a
--- harmonic for the same reason - it reads as an engine lope and cannot alias.
+-- Keep these low. Near half the frame rate, samples alias and walk around the
+-- waveform instead of tracing it - a fine shimmer becomes a violent random
+-- shake that turning amplitude down won't fix. Second component is a
+-- sub-harmonic, not a harmonic, so it reads as engine lope and can't alias.
 VehicleSeat.ENGINE_BASE_HZ = 4.5
 VehicleSeat.ENGINE_RPM_HZ = 4.5            -- added on top at full rpm
 VehicleSeat.ENGINE_MAX_SAMPLE_RATIO = 0.2  -- cap frequency at a fifth of the frame rate
@@ -157,10 +120,8 @@ VehicleSeat.debug = {
     measuredSpeed = 0, reportedSpeed = 0,
     accX = 0, accY = 0, accZ = 0,
     rawAccX = 0, rawAccY = 0, rawAccZ = 0,
-    -- Frame to frame change in the applied offset. This is the judder you can
-    -- actually see, and it is the number that separates a noisy input from a
-    -- broken integrator: small acceleration with a large jump here means the
-    -- fault is downstream of the measurement.
+    -- Frame to frame change in the applied offset - the visible judder. Small
+    -- acceleration with a large jump here means the fault is downstream.
     jumpX = 0, jumpY = 0, jumpZ = 0,
     lastOffX = 0, lastOffY = 0, lastOffZ = 0,
     angPitch = 0, angRoll = 0, angYaw = 0,
@@ -178,13 +139,10 @@ VehicleSeat.signX = 1
 VehicleSeat.signY = 1
 VehicleSeat.signZ = 1
 
----Work out which way setRotation turns things.
---
--- We measure the mount's orientation as three world referenced angles (how far
--- its forward axis is raised, how far its right axis is raised, which way it
--- points) and then have to feed the answer back through setRotation as Euler
--- angles. Rather than assume the engine's handedness, ask it: rotate a scratch
--- node by a known amount and see which way its axes went.
+---Work out which way setRotation turns things. We measure orientation as
+-- world referenced angles but must feed it back through setRotation as Euler
+-- angles, so rather than assume handedness, rotate a scratch node by a known
+-- amount and read which way its axes went.
 function VehicleSeat.calibrateRotationSigns()
     local probe = createTransformGroup("fpcRotationProbe")
 
@@ -203,9 +161,8 @@ function VehicleSeat.calibrateRotationSigns()
     delete(probe)
 end
 
----Node chain used to rebuild the camera's pose. frame carries the mount's world
--- pose, delta carries our offsets in the mount's frame, and proxy carries the
--- camera's pose relative to the mount so the offsets compose correctly.
+---Node chain used to rebuild the camera's pose: frame holds the mount's world
+-- pose, delta holds our offsets, proxy holds the camera relative to the mount.
 function VehicleSeat.getNodes()
     if VehicleSeat.frameNode ~= nil and entityExists(VehicleSeat.frameNode) then
         return VehicleSeat.frameNode, VehicleSeat.deltaNode, VehicleSeat.proxyNode
@@ -223,8 +180,8 @@ end
 
 local function newState()
     return {
-        -- One sample for a position, one for a velocity, one for an
-        -- acceleration. Until we have all three there is nothing to drive with.
+        -- Need a position, velocity and acceleration sample before there's
+        -- anything to drive with.
         warmup = VehicleSeat.WARMUP_FRAMES,
         lastPosX = 0, lastPosY = 0, lastPosZ = 0,
         lastVelX = 0, lastVelY = 0, lastVelZ = 0,
@@ -241,9 +198,8 @@ local function newState()
     }
 end
 
----Throw away the measurement history without touching the springs, so a
--- teleport or a stall stops driving them but whatever they are already doing
--- rings down naturally instead of snapping to centre.
+---Discard measurement history without touching the springs, so a teleport or
+-- stall stops driving them but they ring down naturally instead of snapping.
 function VehicleSeat.resetMeasurement(state)
     state.warmup = VehicleSeat.WARMUP_FRAMES
     state.sincePos, state.sinceVel, state.sinceAtt = 0, 0, 0
@@ -253,8 +209,8 @@ function VehicleSeat.resetMeasurement(state)
     state.filteredPitchAcc, state.filteredRollAcc, state.filteredYawAcc = 0, 0, 0
 end
 
----Semi-implicit Euler on x'' = -w^2 x - 2 zeta w x' + drive, sub-stepped so the
--- spring stays stable through a long frame.
+---Semi-implicit Euler on x'' = -w^2 x - 2 zeta w x' + drive, sub-stepped for
+-- stability through long frames.
 local function integrate(spring, position, velocity, drive, dts)
     local w = spring.freq * math.pi * 2
     local damping = 2 * spring.zeta * w
@@ -284,9 +240,8 @@ local function wrapAngle(angle)
     return angle
 end
 
----The node the camera hangs off. For an inside camera with position smoothing
--- the camera itself lives under a detached world parent, so we have to go
--- through cameraPositionNode to find the actual place in the vehicle.
+---The node the camera hangs off. Position-smoothed inside cameras live under a
+-- detached world parent, so go through cameraPositionNode to find the real spot.
 local function getMountNode(camera)
     local node = camera.cameraPositionNode or camera.cameraNode
     if node == nil then
@@ -305,9 +260,9 @@ local function getMountNode(camera)
     return nil
 end
 
----The physics body the camera hangs off, which is what getLinearVelocity needs.
--- Vehicle:getParentComponent walks up until it finds a node the vehicle claims
--- as one of its components, and returns 0 when there is none.
+---The physics body the camera hangs off, for getLinearVelocity.
+-- Vehicle:getParentComponent walks up to a node the vehicle claims as its own,
+-- returning 0 if there is none.
 local function getBodyNode(camera)
     local vehicle = camera.vehicle
     if vehicle == nil or vehicle.getParentComponent == nil or getLinearVelocity == nil then
@@ -354,8 +309,7 @@ function VehicleSeat.update(camera, dt)
     end
 
     if camera.fpcBodyNode == nil then
-        -- false rather than nil, so a vehicle with no physics body is resolved
-        -- once and not looked up again every frame
+        -- false rather than nil, so a body-less vehicle isn't looked up again
         camera.fpcBodyNode = getBodyNode(camera) or false
     end
 
@@ -375,13 +329,12 @@ function VehicleSeat.update(camera, dt)
     local fwdX, fwdY, fwdZ = localDirectionToWorld(mountNode, 0, 0, 1)
     local rightX, rightY, rightZ = localDirectionToWorld(mountNode, 1, 0, 0)
 
-    -- World referenced attitude: how far the nose is raised, how far the right
-    -- side is raised, and which way we point.
+    -- World referenced attitude: nose raise, right-side raise, heading.
     local pitch = math.asin(math.clamp(fwdY, -1, 1))
     local roll = math.asin(math.clamp(rightY, -1, 1))
     local yaw = math.atan2(fwdX, fwdZ)
 
-    -- First frame after a reset has no previous sample to difference against.
+    -- No previous sample to difference against right after a reset.
     if state.warmup >= VehicleSeat.WARMUP_FRAMES then
         state.warmup = state.warmup - 1
         state.lastPosX, state.lastPosY, state.lastPosZ = posX, posY, posZ
@@ -392,37 +345,32 @@ function VehicleSeat.update(camera, dt)
 
     -- Getting the time interval right is the whole game here.
     --
-    -- Measured in the cab of a tractor on flat tarmac at 25 mph, this reported
-    -- 81.5 m/s^2 fore/aft, 14.0 sideways and 4.7 vertically, where the truth on
-    -- all three is close to zero. Those are ordered exactly by how far the cab
-    -- travels on each axis, which is the signature of a wrong sample interval
-    -- rather than of noise: a bad dt scales every axis by the same fraction of
-    -- its own motion. Fore/aft is worst because it carries the road speed, and
-    -- 8g of imaginary braking is what the lurching was.
+    -- Measured in a tractor cab at 25 mph on flat tarmac, a wrong interval once
+    -- reported 81.5 m/s^2 fore/aft, 14.0 sideways, 4.7 vertically, where truth
+    -- is near zero on all three - ordered exactly by how far the cab travels
+    -- per axis, the signature of a bad dt (it scales every axis by the same
+    -- fraction of its own motion) rather than noise.
     --
-    -- The trap is that the quantities we sample do not all change at the same
-    -- rate. The cab's transform is interpolated up to the render rate, so it
-    -- moves a little every frame. The physics engine's velocity is not - it is
-    -- piecewise constant and only changes when the physics steps. Divide either
-    -- one by the other's interval and the answer is wrong by the ratio between
-    -- them, which is exactly what happened.
+    -- The trap: sampled quantities don't all change at the same rate. The cab
+    -- transform interpolates up to render rate; physics velocity is piecewise
+    -- constant, changing only on a physics step. Divide one by the other's
+    -- interval and the answer is wrong by their ratio.
     --
-    -- So each measured quantity carries its own clock: the accumulated wall time
-    -- since *that* value last changed, and nothing else. Then it does not matter
-    -- which of them is interpolated, or at what rate the game runs either loop.
+    -- So each quantity carries its own clock - wall time since it last changed
+    -- - and it stops mattering which is interpolated or at what rate.
     state.sincePos = state.sincePos + dts
     state.sinceVel = state.sinceVel + dts
     state.sinceAtt = state.sinceAtt + dts
 
-    -- VELOCITY. Straight from the physics engine where there is a body to ask:
-    -- that removes a derivative, and a derivative is where the noise comes from.
+    -- VELOCITY, straight from the physics body where there is one - removes a
+    -- derivative, which is where the noise comes from.
     local velX, velY, velZ
     if camera.fpcBodyNode then
         velX, velY, velZ = getLinearVelocity(camera.fpcBodyNode)
     end
 
     if velX == nil then
-        -- No physics body, so difference the position instead - on its own clock.
+        -- No physics body: difference position instead, on its own clock.
         if posX ~= state.lastPosX or posY ~= state.lastPosY or posZ ~= state.lastPosZ then
             local sdt = math.max(state.sincePos, 0.0005)
             velX = (posX - state.lastPosX) / sdt
@@ -433,15 +381,14 @@ function VehicleSeat.update(camera, dt)
         end
     end
 
-    -- Teleport, vehicle reset, a long stall: anything faster than any vehicle in
-    -- the game can plausibly travel is not real movement. Judged against the time
-    -- actually elapsed, or a long frame at speed reads as a jump.
+    -- Teleport/reset/stall: faster than any vehicle can plausibly travel isn't
+    -- real movement. Judged against elapsed time, or a long frame at speed
+    -- reads as a jump.
     if posX ~= state.lastPosX or posY ~= state.lastPosY or posZ ~= state.lastPosZ then
         local dx, dy, dz = posX - state.lastPosX, posY - state.lastPosY, posZ - state.lastPosZ
         local distance = math.sqrt(dx * dx + dy * dy + dz * dz)
         if distance > VehicleSeat.TELEPORT_SPEED * state.sincePos + VehicleSeat.TELEPORT_MARGIN then
-            -- Drop the measurement history but leave the springs alone, so they
-            -- ring down naturally instead of snapping to centre.
+            -- Drop history, leave the springs to ring down naturally.
             VehicleSeat.resetMeasurement(state)
             return
         end
@@ -470,9 +417,8 @@ function VehicleSeat.update(camera, dt)
         state.lastVelX, state.lastVelY, state.lastVelZ = velX, velY, velZ
 
         if state.warmup > 0 then
-            -- Entering a moving vehicle would otherwise read the whole of its
-            -- speed as one sample of acceleration and punch the springs flat
-            -- into their limits.
+            -- Otherwise entering a moving vehicle reads its whole speed as one
+            -- acceleration sample and punches the springs into their limits.
             state.warmup = state.warmup - 1
         else
             -- Into the cab's own frame: x sideways, y up, z fore/aft
@@ -523,8 +469,8 @@ function VehicleSeat.update(camera, dt)
     local pitchAcc, rollAcc, yawAcc = state.filteredPitchAcc, state.filteredRollAcc, state.filteredYawAcc
 
     -- SEAT SPRINGS ------------------------------------------------------------
-    -- Negative drive: the seat gives way against whatever the cab is doing, so a
-    -- cab accelerating upwards leaves the seat behind and below.
+    -- Negative drive: the seat gives way, so a cab accelerating up leaves the
+    -- seat behind and below.
     local seatScale = FPCSettings.get("vehicleSeatScale")
     local seat = VehicleSeat.SEAT
 
@@ -540,19 +486,17 @@ function VehicleSeat.update(camera, dt)
     local headScale = FPCSettings.get("vehicleHeadScale")
     local head = VehicleSeat.HEAD
 
-    -- Note the two drive terms carry opposite signs, and that is not a slip.
+    -- The two drive terms carry opposite signs deliberately.
     --
-    -- The angular term is a lag: the cab pitches nose up, your head is late, so
-    -- it is still looking where the cab used to be - hence -pitchAcc.
+    -- Angular is a lag: cab pitches nose up, head is late, still looking where
+    -- the cab used to be - hence -pitchAcc.
     --
-    -- The g term is the opposite. Your body is thrown *against* the acceleration,
-    -- so braking (acceleration backwards, localAccZ negative) throws you forward
-    -- and your head pitches down, which is a negative pitch under the convention
-    -- here (pitch is how far the nose is raised). Negative in, negative out, so
-    -- the term is +localAccZ. Same for roll: turning left accelerates you left,
-    -- localAccX goes negative, your body goes right and your head tips right,
-    -- which lowers the right side and so is a negative roll.
-    -- The g terms carry their own scales on top of headScale, because braking and
+    -- The g term is a throw: body goes *against* the acceleration. Braking
+    -- (localAccZ negative) throws you forward, head pitches down (negative
+    -- pitch), so the term is +localAccZ. Same for roll: turning left goes
+    -- localAccX negative, body goes right, head tips right (negative roll).
+    --
+    -- The g terms carry their own scales on top of headScale, since braking and
     -- cornering are read off different measurements and want different gains.
     local brakeScale = FPCSettings.get("vehicleBrakePitchScale")
     local cornerScale = FPCSettings.get("vehicleCornerRollScale")
@@ -598,7 +542,7 @@ function VehicleSeat.update(camera, dt)
         local rpm = math.clamp(vehicle:getMotorRpmPercentage() or 0, 0, 1)
         local load = math.clamp(vehicle:getMotorLoadPercentage() or 0, 0, 1)
 
-        -- Never let the vibration outrun what the frame rate can actually draw
+        -- Cap so vibration can't outrun what the frame rate can draw
         local frequency = math.min(
             VehicleSeat.ENGINE_BASE_HZ + VehicleSeat.ENGINE_RPM_HZ * rpm,
             VehicleSeat.ENGINE_MAX_SAMPLE_RATIO / dts)
@@ -625,8 +569,8 @@ function VehicleSeat.update(camera, dt)
     -- APPLY -------------------------------------------------------------------
     local frameNode, deltaNode, proxyNode = VehicleSeat.getNodes()
 
-    -- Park the chain on the mount with no offset, then hang the camera's current
-    -- pose off it. proxy now holds the camera's pose relative to the cab.
+    -- Park the chain on the mount with no offset, then hang the camera's pose
+    -- off it - proxy now holds it relative to the cab.
     setTranslation(deltaNode, 0, 0, 0)
     setRotation(deltaNode, 0, 0, 0)
     setWorldTranslation(frameNode, posX, posY, posZ)
@@ -651,8 +595,8 @@ function VehicleSeat.update(camera, dt)
     setWorldQuaternion(camera.cameraNode, newQX, newQY, newQZ, newQW)
 end
 
----Peak-hold readout of what the springs are actually being fed, so tuning is a
--- measurement rather than a guess. Toggled with the fpcDebug console command.
+---Peak-hold readout of what the springs are fed, so tuning is measurement, not
+-- guesswork. Toggled with the fpcDebug console command.
 function VehicleSeat.drawDebug()
     if not VehicleSeat.debug.enabled then
         return
@@ -679,14 +623,10 @@ function VehicleSeat.drawDebug()
         d.seatX * 1000, d.seatY * 1000, d.seatZ * 1000))
     line(string.format("head lean   pitch %6.2f  roll %6.2f  yaw %6.2f  deg",
         math.deg(d.headPitch), math.deg(d.headRoll), math.deg(d.headYaw)))
-    -- Frames on which the physics did not step. High is normal and harmless
-    -- above 60 fps; it is only a problem if something starts differentiating
-    -- against frame time again.
     line(string.format("JUDDER      side %6.2f  up %6.2f  fore %6.2f  mm per frame",
         d.jumpX * 1000, d.jumpY * 1000, d.jumpZ * 1000))
-    -- The timing check. These two must agree; if the measured speed is out by
-    -- even a few per cent then the sample interval is wrong, and every
-    -- acceleration above it is wrong by a far larger margin.
+    -- Timing check: these two must agree, or the sample interval is wrong and
+    -- every acceleration above it is wrong by far more.
     line(string.format("speed  measured %6.2f   vehicle says %6.2f  m/s   <- must match",
         d.measuredSpeed, d.reportedSpeed))
     line(string.format("frame %5.1f ms", d.dt * 1000))

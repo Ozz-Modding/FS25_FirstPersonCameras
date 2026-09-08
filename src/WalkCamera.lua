@@ -3,53 +3,38 @@
 --
 -- Head movement for the on-foot first person camera.
 --
--- The base game ships view bobbing but every amplitude constant is zero
--- (PlayerCamera.ROLL_BOBBING / HORIZONTAL_BOBBING / VERTICAL_BOBBING), so the
--- view is rigidly welded to the player capsule. Rather than fill those constants
--- in - they drive a single crude sine and share the cameraRootNode translation
--- with the third person zoom - we insert our own transform between
--- cameraRootNode and the first person camera and drive that. The game keeps full
--- ownership of pitch/yaw/zoom; we only ever write to a node it does not know
--- about, so there is nothing to fight over and nothing to accumulate.
+-- The base game's view bobbing constants are all zero and share cameraRootNode
+-- with third person zoom, so we insert our own transform between
+-- cameraRootNode and the first person camera and drive that instead. Nothing
+-- else writes to it, so there is nothing to fight over or accumulate.
 --
 -- Four layers stack into that node:
---   1. Footstep bob     - tied to distance travelled, not to wall time, so the
---                         gait stays in step with the legs at any speed.
---   2. Handheld sway    - slow incommensurate sines, always running. This is the
---                         layer that stops the view feeling like a tripod.
---   3. Breathing        - a slow rise and fall that fades in when you stand still.
---   4. Landing recoil   - a critically-ish damped spring kicked on touchdown.
+--   1. Footstep bob  - tied to distance travelled, not wall time
+--   2. Handheld sway - slow incommensurate sines, always running
+--   3. Breathing     - fades in when standing still
+--   4. Landing recoil - damped spring kicked on touchdown
 ---
 
 WalkCamera = {}
 
 -- Footstep bob ---------------------------------------------------------------
 --
--- Stride lengths are longer than a real person's. The game walks at 4 m/s and
--- runs at 7, which are not human speeds, so deriving cadence from the real
--- figure of roughly 0.85 m per step gives nearly five steps a second - a frantic
--- flutter rather than a walk. Stretching the stride keeps the cadence at a
--- believable two-ish steps a second across the whole speed range.
+-- Game walk/run speeds (4/7 m/s) aren't human speeds; a real 0.85 m stride
+-- would give ~5 steps/sec. Stride is stretched to keep cadence ~2 steps/sec.
 WalkCamera.STRIDE_LENGTH_WALK = 1.85       -- metres per step at a walk
 WalkCamera.STRIDE_LENGTH_RUN = 2.60        -- metres per step flat out
 WalkCamera.MAX_CADENCE = 3.0               -- steps per second, hard ceiling
 WalkCamera.RUN_SPEED = 7                   -- PlayerStateWalk.MAXIMUM_RUN_SPEED
 WalkCamera.WALK_SPEED = 4                  -- PlayerStateWalk.MAXIMUM_WALK_SPEED
 
--- Weighted towards side to side rather than up and down: walking rolls you from
--- one leg to the other far more than it lifts you.
---
--- These are half what they first were. The original set read as too much at the
--- 100% setting and right at 50%, so the halved values are now what 100% gives -
--- the settings ladder is better spent on room above the default than below it.
+-- Weighted towards side to side: walking rolls you leg to leg more than it
+-- lifts you. Halved from the original set - old 100% now reads as 50%.
 WalkCamera.BOB_VERTICAL = 0.010            -- metres, peak, at full run
 WalkCamera.BOB_LATERAL = 0.026
 WalkCamera.BOB_ROLL = 0.00825              -- radians, ~0.47 degrees
 WalkCamera.BOB_PITCH = 0.0020
 
--- Low pass on the gait layers. Frame time and the player's own speed both jitter
--- a little, and that jitter lands straight on the bob as a shimmer; a short
--- smooth removes it without any visible lag.
+-- Low pass on the gait layers, to remove frame/speed jitter without visible lag.
 WalkCamera.SMOOTHING_RATE = 22             -- per second
 
 -- Handheld sway --------------------------------------------------------------
@@ -95,8 +80,6 @@ WalkCamera.state = {
 }
 
 ---Insert our own transform between the camera root and the first person camera.
--- The first person camera is linked to cameraRootNode with an identity transform
--- and nothing else ever touches it, so re-parenting it is invisible to the game.
 local function getOffsetNode(camera)
     if camera.fpcOffsetNode ~= nil and entityExists(camera.fpcOffsetNode) then
         return camera.fpcOffsetNode
@@ -137,8 +120,7 @@ function WalkCamera.reset(camera)
     end
 end
 
----Steps per second. Stride grows with speed - you do not jog with a walking
--- gait - so cadence rises far more slowly than speed does.
+---Steps per second. Stride grows with speed, so cadence rises slower than speed.
 local function getCadence(speed)
     local t = math.clamp((speed - WalkCamera.WALK_SPEED * 0.4)
         / (WalkCamera.RUN_SPEED - WalkCamera.WALK_SPEED * 0.4), 0, 1)
@@ -168,8 +150,7 @@ function WalkCamera.update(camera, dt)
         return
     end
 
-    -- Long frames (loading hitches, alt-tab) would otherwise fire the springs
-    -- off into the distance.
+    -- Clamp long frames (loading hitches, alt-tab) so the springs don't fire off
     local dts = math.clamp(dt, 0, 100) * 0.001
     if dts <= 0 then
         return
@@ -184,8 +165,7 @@ function WalkCamera.update(camera, dt)
     local offsetX, offsetY, offsetZ = 0, 0, 0
     local pitch, yaw, roll = 0, 0, 0
 
-    -- Speed used for the gait. Smoothed a little so the bob does not snap on and
-    -- off at the acceleration threshold, and ignored entirely in the air.
+    -- Smoothed speed so the bob doesn't snap at the threshold; zeroed in the air.
     local rawSpeed = mover.currentSpeed or 0
     if not mover.isGrounded or mover.isSwimming then
         rawSpeed = 0
@@ -220,12 +200,8 @@ function WalkCamera.update(camera, dt)
         intensity = intensity * bobScale * (1 - state.idleBlend)
 
         local phase = state.stridePhase
-        -- Vertical dips once per step, side to side once per stride.
-        --
-        -- The vertical curve is a plain cosine at twice the stride rate, not
-        -- abs(sin). abs(sin) has the right shape on paper but a corner at every
-        -- footfall, and a corner in position is an instant reversal of velocity:
-        -- that reads as a judder twice a step, not as a footfall.
+        -- Vertical curve is cosine, not abs(sin): abs(sin) has a corner at each
+        -- footfall (an instant velocity reversal), which reads as a judder.
         offsetY = offsetY - math.cos(phase * 2) * WalkCamera.BOB_VERTICAL * 0.5 * intensity
         offsetX = offsetX + math.sin(phase) * WalkCamera.BOB_LATERAL * intensity
         roll = roll + math.sin(phase) * WalkCamera.BOB_ROLL * intensity
@@ -237,8 +213,7 @@ function WalkCamera.update(camera, dt)
         state.swayTime = state.swayTime + dts
         local t = state.swayTime
 
-        -- Incommensurate frequencies so the pattern never visibly repeats. Sway
-        -- is a touch stronger while moving, the way a real head is.
+        -- Incommensurate frequencies so the pattern never visibly repeats
         local amp = swayScale * MathUtil.lerp(1.0, 0.7, state.idleBlend)
 
         pitch = pitch + (math.sin(t * 1.11) + math.sin(t * 2.37) * 0.55) * WalkCamera.SWAY_PITCH * amp
@@ -254,18 +229,16 @@ function WalkCamera.update(camera, dt)
             state.breathPhase = state.breathPhase - math.pi * 2
         end
 
-        -- Fades in as you come to a stop, and deepens after a run
+        -- Fades in at rest, deepens after a run
         local exertion = 1 + math.clamp(speed / WalkCamera.RUN_SPEED, 0, 1) * 0.8
         local breath = math.sin(state.breathPhase) * swayScale * state.idleBlend * exertion
         offsetY = offsetY + breath * WalkCamera.BREATH_VERTICAL
         pitch = pitch + breath * WalkCamera.BREATH_PITCH
     end
 
-    -- SMOOTH ------------------------------------------------------------------
-    -- Everything above is driven by the player's speed and by frame time, both of
-    -- which jitter frame to frame. That jitter lands directly on the bob and
-    -- reads as a shimmer, so low pass the gait layers here. The landing spring is
-    -- added afterwards and deliberately left sharp.
+    -- SMOOTH --------------------------------------------------------------
+    -- Low pass the gait layers to remove speed/frame jitter; landing spring is
+    -- added after and left sharp.
     local alpha = math.min(1, dts * WalkCamera.SMOOTHING_RATE)
     state.smoothedX = state.smoothedX + (offsetX - state.smoothedX) * alpha
     state.smoothedY = state.smoothedY + (offsetY - state.smoothedY) * alpha
@@ -290,8 +263,7 @@ function WalkCamera.update(camera, dt)
             state.lastAirVelocityY = 0
         end
 
-        -- Damped spring back to rest. Sub-stepped so a long frame cannot make it
-        -- explode; semi-implicit Euler keeps it stable at these stiffnesses.
+        -- Damped spring, sub-stepped so a long frame can't blow it up
         local remaining = dts
         local w = WalkCamera.LANDING_OMEGA
         local z = WalkCamera.LANDING_ZETA

@@ -49,7 +49,7 @@ function FirstPersonCameras:deleteMap()
     end
 end
 
--- KEYBINDS -------------------------------------------------------------------
+-- KEYBINDS --------------------------------------------------------------
 
 function FirstPersonCameras.onToggleWalk()
     local enabled = FPCSettings.toggle("walkEnabled")
@@ -64,9 +64,8 @@ function FirstPersonCameras.onToggleVehicle()
     notify(g_i18n:getText(enabled and "fpc_vehicle_on" or "fpc_vehicle_off"))
 end
 
--- registerGlobalPlayerActionEvents runs twice: once for the on-foot input
--- context and again with the vehicle context when you climb into something. That
--- makes it the one place to register a binding that has to work in both.
+-- Runs twice - on-foot context, then vehicle context on entry - so it's the one
+-- place to register a binding that has to work in both.
 PlayerInputComponent.registerGlobalPlayerActionEvents = Utils.overwrittenFunction(
     PlayerInputComponent.registerGlobalPlayerActionEvents,
     function(self, superFunc, context, ...)
@@ -76,9 +75,8 @@ PlayerInputComponent.registerGlobalPlayerActionEvents = Utils.overwrittenFunctio
             return
         end
 
-        -- The base function switches the input context back before it returns,
-        -- so put ourselves in the target context the same way it does, or our
-        -- bindings land in whichever context happened to be current.
+        -- superFunc switches context back before returning; re-enter the target
+        -- context or our bindings land wherever happened to be current.
         local targetContext = context or g_inputBinding:getContextName()
         local previousContext = g_inputBinding:getContextName()
         if previousContext ~= targetContext then
@@ -103,11 +101,10 @@ PlayerInputComponent.registerGlobalPlayerActionEvents = Utils.overwrittenFunctio
     end
 )
 
--- HOOKS ----------------------------------------------------------------------
+-- HOOKS -------------------------------------------------------------------
 
--- updatePosition is the last thing the on-foot state machine does to the camera
--- each frame, so appending here means we run after the game has finished placing
--- it and before it is rendered.
+-- Last thing the on-foot state machine does to the camera each frame, so we run
+-- after it's placed and before render.
 PlayerCamera.updatePosition = Utils.appendedFunction(PlayerCamera.updatePosition,
     function(self, dt)
         if self.player == nil or not self.player.isOwner then
@@ -117,15 +114,13 @@ PlayerCamera.updatePosition = Utils.appendedFunction(PlayerCamera.updatePosition
     end
 )
 
--- Only the active camera of the vehicle you are in gets updated, so this fires
--- once a frame at most (see Enterable:onPostUpdate).
+-- Fires at most once a frame - only the active vehicle camera updates (see
+-- Enterable:onPostUpdate).
 --
--- Installed from onStartMission rather than here at file scope. Several popular
--- camera mods (Indoor Camera Position, for one) replace VehicleCamera.update
--- with their own copy of the whole function and never call superFunc, which
--- throws away everything hooked onto it before they loaded. onStartMission is
--- the last thing to run before you get control, so appending there puts us on
--- the end of whatever chain actually survived.
+-- Installed from onStartMission, not file scope: Indoor Camera Position
+-- replaces VehicleCamera.update wholesale without calling superFunc, dropping
+-- anything hooked before it loads. onStartMission runs last before you get
+-- control, so appending there survives whatever chain is left.
 FSBaseMission.onStartMission = Utils.prependedFunction(FSBaseMission.onStartMission,
     function()
         VehicleCamera.update = Utils.appendedFunction(VehicleCamera.update,
