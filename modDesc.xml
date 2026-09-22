@@ -1,33 +1,44 @@
 <?xml version="1.0" encoding="utf-8" standalone="no" ?>
-<modDesc descVersion="106">
+<modDesc descVersion="113">
     <author>Ozz</author>
     <version>1.0.0.0</version>
     <iconFilename>icon_FirstPersonCameras.dds</iconFilename>
     <title>
         <en>First Person Cameras</en>
+        <fr>Caméras À La Première Personne</fr>
+        <de>Egoperspektive-Kameras</de>
     </title>
     <description>
         <en><![CDATA[First Person Cameras
 
-Two separate effects, each with its own keybind:
+Adds effects to the on-foot first person camera, and in-cab first person camera.
 
-ON FOOT (default Right Ctrl + B)
-Adds head movement to the first person view - footstep bob, body sway, a slow
-handheld drift, breathing while you stand still, and a knee-bend jolt when you
-land from a fall or a jump.
+- Breathing effect for on-foot camera
+- Multiple in-cab effects, simulating engine rumbling and the impact of motion and forces on the player point of view, for a more realistic experience.
 
-IN A VEHICLE (default Right Ctrl + N)
-Simulates a suspended seat. Instead of your head being welded to the cab, the
-seat and your body lag behind as the tractor pitches, rolls and bounces, then
-settle back. You lean into corners, rock forward under braking, and get a shove
-in the back when the machine drops into a rut. Engine vibration comes through
-the seat too.
-
-Everything is tunable from the game's Settings page, including turning
-individual parts of each effect down or off. Purely visual - no gameplay or
-multiplayer impact.
+All effects can be tuned or disabled using settings.
 ]]>
         </en>
+        <fr><![CDATA[Caméras À La Première Personne
+
+Ajoute des effets à la caméra à la première personne à pied et dans la cabine.
+
+- Effet de respiration pour la caméra à pied
+- Plusieurs effets dans la cabine, simulant les vibrations du moteur et l'impact des mouvements et des forces sur le point de vue du joueur, pour une expérience plus réaliste.
+
+Tous les effets sont réglables ou désactivables dans les paramètres.
+]]>
+        </fr>
+        <de><![CDATA[Egoperspektive-Kameras
+
+Fügt der Ego-Perspektive zu Fuß und in der Kabine Effekte hinzu.
+
+- Atemeffekt für die Kamera zu Fuß
+- Mehrere Kabineneffekte, die das Motorbrummen sowie die Auswirkung von Bewegung und Kräften auf die Sicht des Spielers simulieren, für ein realistischeres Erlebnis.
+
+Alle Effekte lassen sich in den Einstellungen anpassen oder deaktivieren.
+]]>
+        </de>
     </description>
 
     <extraSourceFiles>

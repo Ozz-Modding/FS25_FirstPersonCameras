@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<l10n>
+	<translationContributors/>
+	<texts>
+		<!-- Input actions -->
+		<text name="input_FPC_TOGGLE_WALK" text="Kopfbewegung beim Gehen umschalten"/>
+		<text name="input_FPC_TOGGLE_VEHICLE" text="Sitzfederung im Fahrzeug umschalten"/>
+
+		<!-- Toggle feedback -->
+		<text name="fpc_walk_on" text="Kopfbewegung beim Gehen: EIN"/>
+		<text name="fpc_walk_off" text="Kopfbewegung beim Gehen: AUS"/>
+		<text name="fpc_vehicle_on" text="Sitzfederung: EIN"/>
+		<text name="fpc_vehicle_off" text="Sitzfederung: AUS"/>
+
+		<!-- Settings page -->
+		<text name="fpc_setting_section" text="First Person Cameras"/>
+
+		<text name="fpc_setting_walkEnabled" text="Kopfbewegung beim Gehen"/>
+		<text name="fpc_setting_walkEnabled_tooltip" text="Fügt der Ego-Perspektive zu Fuß Kopfbewegung hinzu. Entspricht der Tastenkombination."/>
+
+		<text name="fpc_setting_walkBobScale" text="Schrittwippen"/>
+		<text name="fpc_setting_walkBobScale_tooltip" text="Wie stark die Sicht bei jedem Schritt steigt, sinkt und schwankt. Skaliert mit der Gehgeschwindigkeit."/>
+
+		<text name="fpc_setting_walkSwayScale" text="Handkamera-Schwanken und Atmung"/>
+		<text name="fpc_setting_walkSwayScale_tooltip" text="Langsame Drift, damit die Sicht nicht wie auf einem Stativ wirkt, plus Atmung im Stand."/>
+
+		<text name="fpc_setting_walkLandingScale" text="Landungsaufprall"/>
+		<text name="fpc_setting_walkLandingScale_tooltip" text="Das Einknicken der Knie und das Nicken beim Landen nach einem Sprung oder Sturz. Stärker bei größerer Fallhöhe."/>
+
+		<text name="fpc_setting_vehicleEnabled" text="Sitzfederung im Fahrzeug"/>
+		<text name="fpc_setting_vehicleEnabled_tooltip" text="Die Sicht ist nicht mehr starr mit der Kabine verbunden, sondern bewegt sich auf einem gefederten Sitz. Entspricht der Tastenkombination."/>
+
+		<text name="fpc_setting_vehicleSeatScale" text="Sitzbewegung"/>
+		<text name="fpc_setting_vehicleSeatScale_tooltip" text="Wie weit der Sitz bei Bodenwellen, in Kurven und beim Bremsen nachgibt."/>
+
+		<text name="fpc_setting_vehicleHeadScale" text="Kopfverzögerung"/>
+		<text name="fpc_setting_vehicleHeadScale_tooltip" text="Wie stark der Kopf beim Nicken und Wanken der Maschine nachhinkt und sich in Kurven neigt."/>
+
+		<text name="fpc_setting_vehicleBrakePitchScale" text="Bremsnicken"/>
+		<text name="fpc_setting_vehicleBrakePitchScale_tooltip" text="Wie stark man beim Bremsen nach vorn geworfen wird und der Kopf nach unten nickt, und beim Beschleunigen nach hinten."/>
+
+		<text name="fpc_setting_vehicleCornerRollScale" text="Kurvenneigung"/>
+		<text name="fpc_setting_vehicleCornerRollScale_tooltip" text="Wie stark sich der Kopf zur Kurvenaußenseite neigt. Hält so lange an wie die Kurve."/>
+
+		<text name="fpc_setting_vehicleEngineScale" text="Motorvibration"/>
+		<text name="fpc_setting_vehicleEngineScale_tooltip" text="Vibration, die durch den Sitz nach oben dringt. Die Frequenz folgt der Motordrehzahl, die Stärke der Last."/>
+
+		<text name="fpc_setting_vehicleOutsideCameras" text="Auf Außenkameras anwenden"/>
+		<text name="fpc_setting_vehicleOutsideCameras_tooltip" text="Standardmäßig deaktiviert. Aktivieren, wenn sich auch die Außenkameras mit der Federung bewegen sollen."/>
+	</texts>
+</l10n>

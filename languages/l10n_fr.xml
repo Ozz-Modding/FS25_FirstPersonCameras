@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<l10n>
+	<translationContributors/>
+	<texts>
+		<!-- Input actions -->
+		<text name="input_FPC_TOGGLE_WALK" text="Activer le mouvement de tête (marche)"/>
+		<text name="input_FPC_TOGGLE_VEHICLE" text="Activer la suspension du siège (véhicule)"/>
+
+		<!-- Toggle feedback -->
+		<text name="fpc_walk_on" text="Mouvement de tête en marche : ACTIVÉ"/>
+		<text name="fpc_walk_off" text="Mouvement de tête en marche : DÉSACTIVÉ"/>
+		<text name="fpc_vehicle_on" text="Suspension du siège : ACTIVÉE"/>
+		<text name="fpc_vehicle_off" text="Suspension du siège : DÉSACTIVÉE"/>
+
+		<!-- Settings page -->
+		<text name="fpc_setting_section" text="First Person Cameras"/>
+
+		<text name="fpc_setting_walkEnabled" text="Mouvement de tête en marche"/>
+		<text name="fpc_setting_walkEnabled_tooltip" text="Ajoute du mouvement de tête à la vue à la première personne à pied. Identique au raccourci clavier."/>
+
+		<text name="fpc_setting_walkBobScale" text="Rebond des pas"/>
+		<text name="fpc_setting_walkBobScale_tooltip" text="Amplitude de la montée, descente et balancement de la vue à chaque pas. Varie avec la vitesse de déplacement."/>
+
+		<text name="fpc_setting_walkSwayScale" text="Balancement à main levée et respiration"/>
+		<text name="fpc_setting_walkSwayScale_tooltip" text="Dérive lente qui évite que la vue paraisse figée sur un trépied, plus la respiration à l'arrêt."/>
+
+		<text name="fpc_setting_walkLandingScale" text="Impact à l'atterrissage"/>
+		<text name="fpc_setting_walkLandingScale_tooltip" text="La flexion des genoux et le hochement de tête en atterrissant d'un saut ou d'une chute. Plus fort selon la hauteur de la chute."/>
+
+		<text name="fpc_setting_vehicleEnabled" text="Suspension du siège du véhicule"/>
+		<text name="fpc_setting_vehicleEnabled_tooltip" text="Évite que la vue soit soudée à la cabine, en la faisant reposer sur un siège suspendu. Identique au raccourci clavier."/>
+
+		<text name="fpc_setting_vehicleSeatScale" text="Débattement du siège"/>
+		<text name="fpc_setting_vehicleSeatScale_tooltip" text="Amplitude du débattement du siège sur les bosses, en virage et au freinage."/>
+
+		<text name="fpc_setting_vehicleHeadScale" text="Retard de la tête"/>
+		<text name="fpc_setting_vehicleHeadScale_tooltip" text="Amplitude du retard de la tête quand la machine tangue et roule, et de son inclinaison en virage."/>
+
+		<text name="fpc_setting_vehicleBrakePitchScale" text="Hochement au freinage"/>
+		<text name="fpc_setting_vehicleBrakePitchScale_tooltip" text="Amplitude de la projection vers l'avant et du hochement de tête au freinage, et vers l'arrière à l'accélération."/>
+
+		<text name="fpc_setting_vehicleCornerRollScale" text="Inclinaison en virage"/>
+		<text name="fpc_setting_vehicleCornerRollScale_tooltip" text="Amplitude de l'inclinaison de la tête vers l'extérieur d'un virage. Se maintient tant que dure le virage."/>
+
+		<text name="fpc_setting_vehicleEngineScale" text="Vibration du moteur"/>
+		<text name="fpc_setting_vehicleEngineScale_tooltip" text="Vibration remontant à travers le siège. La fréquence suit le régime moteur, l'intensité suit la charge."/>
+
+		<text name="fpc_setting_vehicleOutsideCameras" text="Appliquer aux caméras extérieures"/>
+		<text name="fpc_setting_vehicleOutsideCameras_tooltip" text="Désactivé par défaut. Activez si vous voulez que les caméras extérieures bougent aussi avec la suspension."/>
+	</texts>
+</l10n>
