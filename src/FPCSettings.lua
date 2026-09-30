@@ -212,10 +212,16 @@ function FPCSettings.addSettingsToMenu()
     -- requires it to match the page, so borrow the page's name.
     FPCSettingsControls.name = settingsPage.name
 
+    -- General, not Game: in multiplayer the Game layout is savegame rules and
+    -- is hidden from everyone but the admin. These settings are per-player.
+    local layout = settingsPage.generalSettingsLayout
+
     local function addMultiOption(id)
         local originalBox = settingsPage.multiVolumeVoiceBox
-        local menuOptionBox = originalBox:clone(settingsPage.gameSettingsLayout)
+        local menuOptionBox = originalBox:clone(layout)
         menuOptionBox.id = id .. "box"
+        -- The voice box is hidden in single player; don't inherit that
+        menuOptionBox:setVisible(true)
 
         local menuMultiOption = menuOptionBox.elements[1]
         menuMultiOption.id = id
@@ -241,9 +247,9 @@ function FPCSettings.addSettingsToMenu()
 
     -- Section header, cloned from an existing one so it picks up the right profile
     local sectionTitle
-    for _, elem in ipairs(settingsPage.gameSettingsLayout.elements) do
+    for _, elem in ipairs(layout.elements) do
         if elem.name == "sectionHeader" then
-            sectionTitle = elem:clone(settingsPage.gameSettingsLayout)
+            sectionTitle = elem:clone(layout)
             break
         end
     end
@@ -252,7 +258,7 @@ function FPCSettings.addSettingsToMenu()
         sectionTitle = TextElement.new()
         sectionTitle:applyProfile("fs25_settingsSectionHeader", true)
         sectionTitle.name = "sectionHeader"
-        settingsPage.gameSettingsLayout:addElement(sectionTitle)
+        layout:addElement(sectionTitle)
     end
 
     sectionTitle:setText(g_i18n:getText("fpc_setting_section"))
@@ -264,7 +270,7 @@ function FPCSettings.addSettingsToMenu()
         addMultiOption(id)
     end
 
-    settingsPage.gameSettingsLayout:invalidateLayout()
+    layout:invalidateLayout()
 
     InGameMenuSettingsFrame.onFrameOpen = Utils.appendedFunction(InGameMenuSettingsFrame.onFrameOpen, function()
         for _, id in ipairs(FPCSettings.menuItems) do
@@ -289,5 +295,5 @@ FocusManager.setGui = Utils.appendedFunction(FocusManager.setGui, function(_, gu
     end
 
     local settingsPage = g_gui.screenControllers[InGameMenu].pageSettings
-    settingsPage.gameSettingsLayout:invalidateLayout()
+    settingsPage.generalSettingsLayout:invalidateLayout()
 end)
