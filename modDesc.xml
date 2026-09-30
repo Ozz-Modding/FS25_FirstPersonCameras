@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8" standalone="no" ?>
 <modDesc descVersion="113">
     <author>Ozz</author>
-    <version>1.0.0.0</version>
+    <version>1.0.0.1</version>
     <iconFilename>icon_FirstPersonCameras.dds</iconFilename>
     <title>
         <en>First Person Cameras</en>
@@ -17,6 +17,14 @@ Adds effects to the on-foot first person camera, and in-cab first person camera.
 - Multiple in-cab effects, simulating engine rumbling and the impact of motion and forces on the player point of view, for a more realistic experience.
 
 All effects can be tuned or disabled using settings.
+
+GitHub: https://github.com/Ozz-Modding/FS25_FirstPersonCameras
+
+Changelog:
+
+1.0.0.1:
+- 
+
 ]]>
         </en>
         <fr><![CDATA[Caméras À La Première Personne
@@ -27,6 +35,14 @@ Ajoute des effets à la caméra à la première personne à pied et dans la cabi
 - Plusieurs effets dans la cabine, simulant les vibrations du moteur et l'impact des mouvements et des forces sur le point de vue du joueur, pour une expérience plus réaliste.
 
 Tous les effets sont réglables ou désactivables dans les paramètres.
+
+GitHub: https://github.com/Ozz-Modding/FS25_FirstPersonCameras
+
+Journal des modifications :
+
+1.0.0.1 :
+- 
+
 ]]>
         </fr>
         <de><![CDATA[Egoperspektive-Kameras
@@ -37,6 +53,14 @@ Fügt der Ego-Perspektive zu Fuß und in der Kabine Effekte hinzu.
 - Mehrere Kabineneffekte, die das Motorbrummen sowie die Auswirkung von Bewegung und Kräften auf die Sicht des Spielers simulieren, für ein realistischeres Erlebnis.
 
 Alle Effekte lassen sich in den Einstellungen anpassen oder deaktivieren.
+
+GitHub: https://github.com/Ozz-Modding/FS25_FirstPersonCameras
+
+Änderungsprotokoll:
+
+1.0.0.1:
+- 
+
 ]]>
         </de>
     </description>
