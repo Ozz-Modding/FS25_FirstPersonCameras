@@ -23,7 +23,7 @@ GitHub: https://github.com/Ozz-Modding/FS25_FirstPersonCameras
 Changelog:
 
 1.0.0.1:
-- 
+- Settings moved to the General tab, so every player can change their own settings in multiplayer (previously only the admin could)
 
 ]]>
         </en>
@@ -41,7 +41,7 @@ GitHub: https://github.com/Ozz-Modding/FS25_FirstPersonCameras
 Journal des modifications :
 
 1.0.0.1 :
-- 
+- Les paramètres ont été déplacés dans l'onglet Général, afin que chaque joueur puisse modifier ses propres paramètres en multijoueur (auparavant, seul l'administrateur le pouvait)
 
 ]]>
         </fr>
@@ -59,7 +59,7 @@ GitHub: https://github.com/Ozz-Modding/FS25_FirstPersonCameras
 Änderungsprotokoll:
 
 1.0.0.1:
-- 
+- Einstellungen in den Reiter Allgemein verschoben, damit im Mehrspielermodus jeder Spieler seine eigenen Einstellungen ändern kann (bisher nur der Administrator)
 
 ]]>
         </de>
